@@ -1,5 +1,6 @@
 .env
 riva_quickstart_v*/
+.ngc/
 *.log
 __pycache__/
 *.pyc

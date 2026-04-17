@@ -110,6 +110,17 @@ set_flag tts_language_code '"multi"'
 set_flag riva_model_loc '"riva-model-repo"'
 
 # ---- Step 5: run riva_init.sh ----------------------------------------------
+# The quickstart's riva_init.sh uses `docker run -it` for its helper containers.
+# `-t` requires a TTY on stdin; when bootstrap runs under nohup/CI with a
+# redirected stdin the helper aborts with "cannot attach stdin to a TTY-enabled
+# container". Patch `-it` → `-i` in-place so it works in both interactive and
+# non-interactive shells. Safe: the helpers don't actually need a TTY.
+INIT_SCRIPT="${QUICKSTART_DIR}/riva_init.sh"
+if grep -q 'docker run -it' "$INIT_SCRIPT" || grep -q 'docker run --init -it' "$INIT_SCRIPT"; then
+    log "Patching TTY-requiring 'docker run -it' → '-i' in $INIT_SCRIPT"
+    sed -i -E 's|docker run -it |docker run -i |g; s|docker run --init -it |docker run --init -i |g' "$INIT_SCRIPT"
+fi
+
 if [[ -f "$QUICKSTART_MARKER" ]]; then
     log "riva_init.sh already ran successfully (marker $QUICKSTART_MARKER present). Delete it to re-run."
 else

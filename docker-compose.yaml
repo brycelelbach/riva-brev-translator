@@ -2,11 +2,14 @@ name: riva-translator
 
 # Real-time speech translation launchable.
 #
-# Two services:
-#   riva  -- NVIDIA Riva Speech Server (ASR + NMT + TTS + S2S on gRPC :50051)
-#   app   -- FastAPI + HTTPS web UI on :8081 that pairs a "speaker" device with
-#            a "listener" device and proxies streaming audio through Riva's
-#            StreamingTranslateSpeechToSpeech gRPC API.
+# Three services:
+#   riva        -- NVIDIA Riva Speech Server (ASR + NMT + TTS + S2S on gRPC :50051)
+#   app         -- FastAPI web UI on :8081 that pairs a "speaker" device with a
+#                  "listener" device and proxies streaming audio through Riva's
+#                  StreamingTranslateSpeechToSpeech gRPC API.
+#   cloudflared -- Cloudflare quick tunnel that publishes https://<random>.trycloudflare.com
+#                  pointing at app:8081. Gives the browser a real TLS cert
+#                  (required for mic access) without needing DNS/AWS SG config.
 #
 # First-time setup: run `./bootstrap.sh` on the host once before `docker
 # compose up`. That script downloads the Riva Quick Start package from NGC and
@@ -57,19 +60,19 @@ services:
     environment:
       RIVA_URI: "riva:50051"
       WEB_PORT: "8081"
-      CERT_DIR: "/certs"
-      # Host that the browser uses to reach this app. Set to the Brev public
-      # hostname or IP so the self-signed cert's SAN matches. Leave unset to
-      # accept connections to any hostname (cert CN = localhost).
-      PUBLIC_HOSTNAME: "${PUBLIC_HOSTNAME:-}"
-    volumes:
-      - app-certs:/certs
     depends_on:
       riva:
         condition: service_healthy
+
+  cloudflared:
+    image: cloudflare/cloudflared:2024.10.0
+    container_name: riva-translator-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --url http://app:8081
+    depends_on:
+      - app
 
 volumes:
   riva-model-repo:
     external: true
     # Populated by bootstrap.sh via the Riva Quick Start's riva_init.sh.
-  app-certs:
