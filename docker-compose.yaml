@@ -1,0 +1,75 @@
+name: riva-translator
+
+# Real-time speech translation launchable.
+#
+# Two services:
+#   riva  -- NVIDIA Riva Speech Server (ASR + NMT + TTS + S2S on gRPC :50051)
+#   app   -- FastAPI + HTTPS web UI on :8081 that pairs a "speaker" device with
+#            a "listener" device and proxies streaming audio through Riva's
+#            StreamingTranslateSpeechToSpeech gRPC API.
+#
+# First-time setup: run `./bootstrap.sh` on the host once before `docker
+# compose up`. That script downloads the Riva Quick Start package from NGC and
+# deploys the ASR/NMT/TTS models into the `riva-model-repo` docker volume.
+
+services:
+  riva:
+    image: nvcr.io/nvidia/riva/riva-speech:2.19.0
+    container_name: riva-speech
+    restart: unless-stopped
+    shm_size: "1gb"
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    ports:
+      - "50051:50051"
+    volumes:
+      - riva-model-repo:/data
+    command:
+      - start-riva
+      - --riva-uri=0.0.0.0:50051
+      - --asr-service=true
+      - --tts-service=true
+      - --nmt-service=true
+      - --nlp-service=false
+    healthcheck:
+      test: ["CMD", "/bin/grpc_health_probe", "-addr=:50051"]
+      interval: 15s
+      timeout: 5s
+      retries: 40
+      start_period: 120s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  app:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    container_name: riva-translator-app
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      RIVA_URI: "riva:50051"
+      WEB_PORT: "8081"
+      CERT_DIR: "/certs"
+      # Host that the browser uses to reach this app. Set to the Brev public
+      # hostname or IP so the self-signed cert's SAN matches. Leave unset to
+      # accept connections to any hostname (cert CN = localhost).
+      PUBLIC_HOSTNAME: "${PUBLIC_HOSTNAME:-}"
+    volumes:
+      - app-certs:/certs
+    depends_on:
+      riva:
+        condition: service_healthy
+
+volumes:
+  riva-model-repo:
+    external: true
+    # Populated by bootstrap.sh via the Riva Quick Start's riva_init.sh.
+  app-certs:

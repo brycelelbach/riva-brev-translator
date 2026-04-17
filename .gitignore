@@ -1,0 +1,6 @@
+.env
+riva_quickstart_v*/
+*.log
+__pycache__/
+*.pyc
+app/certs/
