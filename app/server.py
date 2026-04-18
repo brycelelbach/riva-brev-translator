@@ -57,18 +57,17 @@ TTS_SAMPLE_RATE = 44100
 #
 # S2S (audio) pipeline: Riva's model-tuned zh-CN defaults commit on ~0.5-1s
 # pauses, producing 1-1.5s utterances (2-4 English words) that sound like
-# "one or two words at a time" in TTS. We force a long EOU so natural
-# between-sentence pauses don't trigger a commit — utterances span full
-# phrases and NMT sees more complete clauses to translate (better quality
-# than fragment-by-fragment translation). Trade-off: ~3.5s of end-of-phrase
-# latency before the listener hears it, which is acceptable for lecture-
-# style speech.
+# "one or two words at a time" in TTS. We force a long EOU (2500ms) so
+# natural between-sentence pauses don't trigger a commit — utterances span
+# full phrases and TTS output stays in longer, smoother bursts. Trade-off:
+# ~2.5s of end-of-phrase latency before the listener hears it, which is
+# acceptable for lecture-style speech.
 #
 # Caption (S2T) pipeline: held at 1500ms so English captions appear within
 # ~1.5s of any natural pause, independent of the S2S cadence. Captions are
 # read, not heard, so short fragments are fine.
 S2S_STOP_HISTORY_MS = int(os.environ.get("S2S_STOP_HISTORY_MS", "1500"))
-S2S_STOP_HISTORY_EOU_MS = int(os.environ.get("S2S_STOP_HISTORY_EOU_MS", "3500"))
+S2S_STOP_HISTORY_EOU_MS = int(os.environ.get("S2S_STOP_HISTORY_EOU_MS", "2500"))
 CAPTION_STOP_HISTORY_MS = int(os.environ.get("CAPTION_STOP_HISTORY_MS", "1500"))
 CAPTION_STOP_HISTORY_EOU_MS = int(os.environ.get("CAPTION_STOP_HISTORY_EOU_MS", "1500"))
 SOURCE_STOP_HISTORY_MS = int(os.environ.get("SOURCE_STOP_HISTORY_MS", "1500"))
