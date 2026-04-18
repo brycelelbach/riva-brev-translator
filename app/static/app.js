@@ -21,6 +21,7 @@ const els = {
   levelBar: document.getElementById("level-bar"),
   partialSource: document.getElementById("partial-source"),
   finalSource: document.getElementById("final-source"),
+  partialTranslation: document.getElementById("partial-translation"),
   translationList: document.getElementById("translation-list"),
   startPlayback: document.getElementById("start-playback"),
   playbackStatus: document.getElementById("playback-status"),
@@ -35,6 +36,7 @@ const els = {
   duplexLevelBar: document.getElementById("duplex-level-bar"),
   duplexPartialSource: document.getElementById("duplex-partial-source"),
   duplexFinalSource: document.getElementById("duplex-final-source"),
+  duplexPartialTranslation: document.getElementById("duplex-partial-translation"),
   duplexTranslationList: document.getElementById("duplex-translation-list"),
   statusLog: document.getElementById("status-log"),
 };
@@ -149,6 +151,7 @@ async function startCapture(roomName) {
   els.stopCapture.disabled = false;
   els.partialSource.textContent = "";
   els.finalSource.innerHTML = "";
+  els.partialTranslation.textContent = "";
   els.translationList.innerHTML = "";
 
   acquireWakeLock();
@@ -231,11 +234,15 @@ function onSpeakerMessage(ev) {
   try { msg = JSON.parse(ev.data); } catch { return; }
   if (msg.type === "transcript") {
     if (msg.partial) els.partialSource.textContent = msg.partial;
+    if (msg.partial_translated) els.partialTranslation.textContent = msg.partial_translated;
     if (msg.final) {
       els.partialSource.textContent = "";
       appendListItem(els.finalSource, msg.final);
     }
-    if (msg.translated) appendListItem(els.translationList, msg.translated);
+    if (msg.translated) {
+      els.partialTranslation.textContent = "";
+      appendListItem(els.translationList, msg.translated);
+    }
   } else if (msg.type === "status") {
     log(msg.text || "");
   }
@@ -304,7 +311,7 @@ function onListenerMessage(ev, state) {
     let msg;
     try { msg = JSON.parse(ev.data); } catch { return; }
     if (msg.type === "transcript") {
-      if (msg.partial) els.listenerPartial.textContent = msg.partial;
+      if (msg.partial_translated) els.listenerPartial.textContent = msg.partial_translated;
       if (msg.translated || msg.final) {
         els.listenerPartial.textContent = "";
         appendListItem(els.listenerCaptions, msg.translated || msg.final);
@@ -455,6 +462,7 @@ async function beginDuplex(roomName) {
   els.duplexStop.disabled = false;
   els.duplexPartialSource.textContent = "";
   els.duplexFinalSource.innerHTML = "";
+  els.duplexPartialTranslation.textContent = "";
   els.duplexTranslationList.innerHTML = "";
   els.duplexStatus.textContent = "Connecting...";
 
@@ -632,11 +640,17 @@ function onDuplexSpeakerMessage(ev) {
   try { msg = JSON.parse(ev.data); } catch { return; }
   if (msg.type === "transcript") {
     if (msg.partial) els.duplexPartialSource.textContent = msg.partial;
+    if (msg.partial_translated) {
+      els.duplexPartialTranslation.textContent = msg.partial_translated;
+    }
     if (msg.final) {
       els.duplexPartialSource.textContent = "";
       appendListItem(els.duplexFinalSource, msg.final);
     }
-    if (msg.translated) appendListItem(els.duplexTranslationList, msg.translated);
+    if (msg.translated) {
+      els.duplexPartialTranslation.textContent = "";
+      appendListItem(els.duplexTranslationList, msg.translated);
+    }
   } else if (msg.type === "status") {
     log(msg.text || "");
   }

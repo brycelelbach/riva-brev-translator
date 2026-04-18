@@ -14,6 +14,7 @@ import logging
 import os
 import queue
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, Optional
@@ -46,6 +47,26 @@ TARGET_LANGUAGE = "en-US"
 TARGET_VOICE = "Magpie-Multilingual.EN-US.Female.Neutral"
 ASR_SAMPLE_RATE = 16000
 TTS_SAMPLE_RATE = 44100
+
+# Endpointing tuned for continuous lecture-style speech: shorter silence
+# thresholds finalize utterances every few seconds, so both the TTS audio and
+# the caption panes refresh frequently instead of waiting for long pauses.
+# Values are milliseconds of silence. Riva's conformer defaults are ~800 ms
+# (stop_history) / ~1600 ms (stop_history_eou); lowering them produces more
+# frequent but shorter segments. Override via env if the speaker gets cut off.
+ASR_STOP_HISTORY_MS = int(os.environ.get("ASR_STOP_HISTORY_MS", "400"))
+ASR_STOP_HISTORY_EOU_MS = int(os.environ.get("ASR_STOP_HISTORY_EOU_MS", "800"))
+
+# Partial-translation throttle. The ASR emits partials ~5–10x/sec; translating
+# every one saturates NMT. We translate the current partial at most every
+# PARTIAL_TRANSLATE_MIN_INTERVAL_S seconds, and only if it has grown by at
+# least PARTIAL_TRANSLATE_MIN_CHAR_DELTA Chinese characters since last time.
+PARTIAL_TRANSLATE_MIN_INTERVAL_S = float(
+    os.environ.get("PARTIAL_TRANSLATE_MIN_INTERVAL_S", "0.6")
+)
+PARTIAL_TRANSLATE_MIN_CHAR_DELTA = int(
+    os.environ.get("PARTIAL_TRANSLATE_MIN_CHAR_DELTA", "3")
+)
 
 # ---------------------------------------------------------------------------
 # Session state
@@ -119,6 +140,13 @@ async def get_or_create_room(name: str) -> Room:
 # Riva worker
 
 
+def _endpointing_config() -> riva_asr_pb2.EndpointingConfig:
+    return riva_asr_pb2.EndpointingConfig(
+        stop_history=ASR_STOP_HISTORY_MS,
+        stop_history_eou=ASR_STOP_HISTORY_EOU_MS,
+    )
+
+
 def _build_streaming_config() -> riva_nmt_pb2.StreamingTranslateSpeechToSpeechConfig:
     asr_cfg = riva_asr_pb2.RecognitionConfig(
         encoding=riva_audio_pb2.LINEAR_PCM,
@@ -128,6 +156,7 @@ def _build_streaming_config() -> riva_nmt_pb2.StreamingTranslateSpeechToSpeechCo
         sample_rate_hertz=ASR_SAMPLE_RATE,
         audio_channel_count=1,
     )
+    asr_cfg.endpointing_config.CopyFrom(_endpointing_config())
     streaming_asr = riva_asr_pb2.StreamingRecognitionConfig(
         config=asr_cfg,
         interim_results=True,
@@ -174,6 +203,7 @@ def _run_asr_session(
             sample_rate_hertz=ASR_SAMPLE_RATE,
             audio_channel_count=1,
         )
+        asr_cfg.endpointing_config.CopyFrom(_endpointing_config())
         streaming_cfg = riva_asr_pb2.StreamingRecognitionConfig(
             config=asr_cfg,
             interim_results=True,
@@ -182,6 +212,25 @@ def _run_asr_session(
             audio_chunks=pump,
             streaming_config=streaming_cfg,
         )
+
+        target_lang_short = TARGET_LANGUAGE.split("-")[0]
+        last_partial_translate_time = 0.0
+        last_partial_translate_text = ""
+
+        def _translate(text: str) -> Optional[str]:
+            try:
+                tr = nmt.translate(
+                    texts=[text],
+                    model="megatronnmt_any_any_1b",
+                    source_language=SOURCE_LANGUAGE,
+                    target_language=target_lang_short,
+                )
+                translations = list(getattr(tr, "translations", []) or [])
+                return translations[0].text if translations else None
+            except Exception:  # noqa: BLE001
+                LOG.exception("[room=%s] translate() failed", room.name)
+                return None
+
         for resp in responses:
             for result in resp.results:
                 alts = list(getattr(result, "alternatives", []) or [])
@@ -194,20 +243,28 @@ def _run_asr_session(
                 msg: Dict[str, str] = {}
                 if is_final:
                     msg["final"] = transcript
-                    try:
-                        tr = nmt.translate(
-                            texts=[transcript],
-                            model="megatronnmt_any_any_1b",
-                            source_language=SOURCE_LANGUAGE,
-                            target_language=TARGET_LANGUAGE.split("-")[0],
-                        )
-                        translations = list(getattr(tr, "translations", []) or [])
-                        if translations:
-                            msg["translated"] = translations[0].text
-                    except Exception:  # noqa: BLE001
-                        LOG.exception("[room=%s] translate() failed", room.name)
+                    translated = _translate(transcript)
+                    if translated is not None:
+                        msg["translated"] = translated
+                    last_partial_translate_time = 0.0
+                    last_partial_translate_text = ""
                 else:
                     msg["partial"] = transcript
+                    now = time.monotonic()
+                    grew_enough = (
+                        len(transcript) - len(last_partial_translate_text)
+                        >= PARTIAL_TRANSLATE_MIN_CHAR_DELTA
+                    )
+                    if (
+                        now - last_partial_translate_time
+                        >= PARTIAL_TRANSLATE_MIN_INTERVAL_S
+                        and grew_enough
+                    ):
+                        last_partial_translate_time = now
+                        last_partial_translate_text = transcript
+                        partial_translated = _translate(transcript)
+                        if partial_translated is not None:
+                            msg["partial_translated"] = partial_translated
                 asyncio.run_coroutine_threadsafe(
                     _broadcast_transcripts(room, msg), loop
                 )
