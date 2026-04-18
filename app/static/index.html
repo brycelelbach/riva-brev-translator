@@ -9,7 +9,7 @@
 <body>
   <header>
     <h1>Riva Chinese &rarr; English Translator</h1>
-    <p class="subtitle">Speak Chinese into one device &rarr; hear the English translation on another.</p>
+    <p class="subtitle">Speak Chinese, hear English &mdash; on one device or split between two.</p>
   </header>
 
   <main>
@@ -21,6 +21,11 @@
 
       <h2>2. Pick a role</h2>
       <div class="role-grid">
+        <button class="role-button" data-role="duplex">
+          <span class="role-emoji" aria-hidden="true">Both</span>
+          <span class="role-title">This device</span>
+          <span class="role-desc">Mic and speaker on one device. Pick separate input/output.</span>
+        </button>
         <button class="role-button" data-role="speaker">
           <span class="role-emoji" aria-hidden="true">Mic</span>
           <span class="role-title">Speaker</span>
@@ -40,7 +45,7 @@
         <button id="start-capture" class="primary">Start microphone</button>
         <button id="stop-capture" class="secondary" disabled>Stop</button>
       </div>
-      <div id="level-meter"><div id="level-bar"></div></div>
+      <div class="level-meter"><div id="level-bar" class="level-bar"></div></div>
       <div class="transcripts">
         <div>
           <h3>Heard (Chinese)</h3>
@@ -65,6 +70,36 @@
         <h3>Captions (English)</h3>
         <p id="listener-partial" class="partial"></p>
         <ul id="listener-captions"></ul>
+      </div>
+    </section>
+
+    <section id="duplex-panel" class="hidden">
+      <h2>Both (single device, Chinese &rarr; English)</h2>
+      <div class="control-row">
+        <button id="duplex-start" class="primary">Start</button>
+        <button id="duplex-stop" class="secondary" disabled>Stop</button>
+        <span id="duplex-status"></span>
+      </div>
+      <div class="device-row">
+        <label for="duplex-input">Microphone</label>
+        <select id="duplex-input"><option value="">Default microphone</option></select>
+      </div>
+      <div class="device-row">
+        <label for="duplex-output">Speaker</label>
+        <select id="duplex-output"><option value="">Default speaker</option></select>
+      </div>
+      <p id="duplex-output-hint" class="hint"></p>
+      <div class="level-meter"><div id="duplex-level-bar" class="level-bar"></div></div>
+      <div class="transcripts">
+        <div>
+          <h3>Heard (Chinese)</h3>
+          <p id="duplex-partial-source" class="partial"></p>
+          <ul id="duplex-final-source"></ul>
+        </div>
+        <div>
+          <h3>Translation (English)</h3>
+          <ul id="duplex-translation-list"></ul>
+        </div>
       </div>
     </section>
 

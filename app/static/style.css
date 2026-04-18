@@ -187,7 +187,7 @@ button.secondary:disabled {
   cursor: not-allowed;
 }
 
-#level-meter {
+.level-meter {
   background: var(--panel-2);
   height: 10px;
   border-radius: 5px;
@@ -196,11 +196,28 @@ button.secondary:disabled {
   border: 1px solid var(--border);
 }
 
-#level-bar {
+.level-bar {
   background: linear-gradient(90deg, var(--accent), #ffb400 70%, var(--danger) 100%);
   width: 0%;
   height: 100%;
   transition: width 0.05s linear;
+}
+
+.device-row {
+  display: grid;
+  grid-template-columns: 6rem 1fr;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.device-row label {
+  margin: 0;
+}
+
+.device-row select {
+  min-width: 0;
+  width: 100%;
 }
 
 .transcripts {

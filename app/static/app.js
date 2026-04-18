@@ -15,6 +15,7 @@ const els = {
   setup: document.getElementById("setup"),
   speakerPanel: document.getElementById("speaker-panel"),
   listenerPanel: document.getElementById("listener-panel"),
+  duplexPanel: document.getElementById("duplex-panel"),
   startCapture: document.getElementById("start-capture"),
   stopCapture: document.getElementById("stop-capture"),
   levelBar: document.getElementById("level-bar"),
@@ -25,6 +26,16 @@ const els = {
   playbackStatus: document.getElementById("playback-status"),
   listenerPartial: document.getElementById("listener-partial"),
   listenerCaptions: document.getElementById("listener-captions"),
+  duplexStart: document.getElementById("duplex-start"),
+  duplexStop: document.getElementById("duplex-stop"),
+  duplexStatus: document.getElementById("duplex-status"),
+  duplexInput: document.getElementById("duplex-input"),
+  duplexOutput: document.getElementById("duplex-output"),
+  duplexOutputHint: document.getElementById("duplex-output-hint"),
+  duplexLevelBar: document.getElementById("duplex-level-bar"),
+  duplexPartialSource: document.getElementById("duplex-partial-source"),
+  duplexFinalSource: document.getElementById("duplex-final-source"),
+  duplexTranslationList: document.getElementById("duplex-translation-list"),
   statusLog: document.getElementById("status-log"),
 };
 
@@ -49,7 +60,8 @@ const els = {
       els.roleButtons.forEach((b) => b.classList.remove("selected"));
       btn.classList.add("selected");
       if (role === "speaker") startSpeaker(roomName);
-      else startListener(roomName);
+      else if (role === "listener") startListener(roomName);
+      else if (role === "duplex") startDuplex(roomName);
     });
   });
 })();
@@ -331,6 +343,327 @@ function scheduleAudioChunk(state, arrayBuffer) {
   if (state.scheduled === 1) {
     els.playbackStatus.textContent = "Playing translated audio.";
   }
+}
+
+// ---------------------------------------------------------------------------
+// Duplex (one device: input + output with device pickers)
+//
+// Opens both /ws/speaker and /ws/listener in the same tab. Mic audio flows
+// through an AudioWorklet to the speaker WS; translated audio from the
+// listener WS is scheduled onto an AudioContext routed via a
+// MediaStreamDestination into a hidden <audio> element so we can pick the
+// physical output with HTMLMediaElement.setSinkId().
+
+let duplexState = null;
+
+async function startDuplex(roomName) {
+  els.duplexPanel.classList.remove("hidden");
+  els.speakerPanel.classList.add("hidden");
+  els.listenerPanel.classList.add("hidden");
+  log(`Duplex mode, room "${roomName}"`);
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    alert("This browser does not expose getUserMedia. Use Chrome/Edge over HTTPS.");
+    return;
+  }
+
+  // Probe for mic permission so device labels populate.
+  let probe;
+  try {
+    probe = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  } catch (err) {
+    log(`Microphone access denied: ${err.message}`);
+    alert(`Microphone access denied: ${err.message}`);
+    return;
+  }
+  probe.getTracks().forEach((t) => t.stop());
+
+  await populateDuplexDevices();
+  navigator.mediaDevices.addEventListener("devicechange", populateDuplexDevices);
+
+  const sinkSupported = typeof HTMLMediaElement !== "undefined"
+    && typeof HTMLMediaElement.prototype.setSinkId === "function";
+  if (!sinkSupported) {
+    els.duplexOutput.disabled = true;
+    els.duplexOutputHint.textContent =
+      "Output device selection is not supported by this browser; playback uses the system default.";
+  } else {
+    els.duplexOutputHint.textContent = "";
+  }
+
+  els.duplexStart.disabled = false;
+  els.duplexStop.disabled = true;
+
+  els.duplexStart.onclick = () => beginDuplex(roomName);
+  els.duplexStop.onclick = () => endDuplex();
+
+  els.duplexInput.onchange = () => {
+    if (duplexState) rebuildDuplexCapture();
+  };
+  els.duplexOutput.onchange = async () => {
+    if (duplexState && duplexState.audioEl && sinkSupported) {
+      try {
+        await duplexState.audioEl.setSinkId(els.duplexOutput.value || "");
+        log(`output switched to "${els.duplexOutput.selectedOptions[0].text}"`);
+      } catch (err) {
+        log(`setSinkId failed: ${err.message}`);
+      }
+    }
+  };
+}
+
+async function populateDuplexDevices() {
+  let devices;
+  try {
+    devices = await navigator.mediaDevices.enumerateDevices();
+  } catch (err) {
+    log(`enumerateDevices failed: ${err.message}`);
+    return;
+  }
+  fillDeviceSelect(
+    els.duplexInput,
+    devices.filter((d) => d.kind === "audioinput"),
+    "Default microphone",
+  );
+  fillDeviceSelect(
+    els.duplexOutput,
+    devices.filter((d) => d.kind === "audiooutput"),
+    "Default speaker",
+  );
+}
+
+function fillDeviceSelect(selectEl, devices, defaultLabel) {
+  const prev = selectEl.value;
+  selectEl.innerHTML = "";
+  const defOpt = document.createElement("option");
+  defOpt.value = "";
+  defOpt.textContent = defaultLabel;
+  selectEl.appendChild(defOpt);
+  devices.forEach((d, i) => {
+    const opt = document.createElement("option");
+    opt.value = d.deviceId;
+    opt.textContent = d.label || `Device ${i + 1}`;
+    selectEl.appendChild(opt);
+  });
+  if (prev && Array.from(selectEl.options).some((o) => o.value === prev)) {
+    selectEl.value = prev;
+  }
+}
+
+async function beginDuplex(roomName) {
+  els.duplexStart.disabled = true;
+  els.duplexStop.disabled = false;
+  els.duplexPartialSource.textContent = "";
+  els.duplexFinalSource.innerHTML = "";
+  els.duplexTranslationList.innerHTML = "";
+  els.duplexStatus.textContent = "Connecting...";
+
+  // --- Capture side: mic -> worklet -> /ws/speaker --------------------------
+  const captureCtx = new (window.AudioContext || window.webkitAudioContext)();
+  try {
+    await captureCtx.audioWorklet.addModule("/static/audio-processor.js");
+  } catch (err) {
+    log(`AudioWorklet failed: ${err.message}`);
+    try { captureCtx.close(); } catch {}
+    els.duplexStart.disabled = false;
+    els.duplexStop.disabled = true;
+    return;
+  }
+
+  const inputId = els.duplexInput.value;
+  let micStream;
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        deviceId: inputId ? { exact: inputId } : undefined,
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+      video: false,
+    });
+  } catch (err) {
+    log(`Microphone access failed: ${err.message}`);
+    try { captureCtx.close(); } catch {}
+    els.duplexStart.disabled = false;
+    els.duplexStop.disabled = true;
+    return;
+  }
+
+  const worklet = new AudioWorkletNode(captureCtx, "capture-processor", {
+    processorOptions: { targetSampleRate: SPEAKER_SAMPLE_RATE },
+  });
+  const micSource = captureCtx.createMediaStreamSource(micStream);
+  micSource.connect(worklet);
+
+  const speakerWs = new WebSocket(
+    buildWsUrl(`/ws/speaker/${encodeURIComponent(roomName)}`),
+  );
+  speakerWs.binaryType = "arraybuffer";
+  speakerWs.addEventListener("open", () => log("speaker WS open (duplex)"));
+  speakerWs.addEventListener("close", (ev) =>
+    log(`speaker WS closed (${ev.code} ${ev.reason || ""})`));
+  speakerWs.addEventListener("error", () => log("speaker WS error"));
+  speakerWs.addEventListener("message", (ev) => onDuplexSpeakerMessage(ev));
+
+  worklet.port.onmessage = (ev) => {
+    const { type, buffer, rms } = ev.data;
+    if (type === "level") {
+      els.duplexLevelBar.style.width = `${Math.min(100, Math.round(rms * 250))}%`;
+    } else if (type === "pcm") {
+      if (speakerWs.readyState === WebSocket.OPEN) speakerWs.send(buffer);
+    }
+  };
+
+  // --- Playback side: /ws/listener -> AudioContext -> <audio>.setSinkId ----
+  const playbackCtx = new (window.AudioContext || window.webkitAudioContext)({
+    sampleRate: LISTENER_SAMPLE_RATE,
+  });
+  try { await playbackCtx.resume(); } catch {}
+  const destNode = playbackCtx.createMediaStreamDestination();
+
+  const audioEl = new Audio();
+  audioEl.autoplay = true;
+  audioEl.srcObject = destNode.stream;
+  const outputId = els.duplexOutput.value;
+  if (outputId && typeof audioEl.setSinkId === "function") {
+    try { await audioEl.setSinkId(outputId); }
+    catch (err) { log(`setSinkId failed: ${err.message}`); }
+  }
+  try { await audioEl.play(); }
+  catch (err) { log(`audio.play() failed: ${err.message}`); }
+
+  const playState = {
+    audioCtx: playbackCtx,
+    destNode,
+    nextStartTime: 0,
+    scheduled: 0,
+  };
+
+  const listenerWs = new WebSocket(
+    buildWsUrl(`/ws/listener/${encodeURIComponent(roomName)}`),
+  );
+  listenerWs.binaryType = "arraybuffer";
+  listenerWs.addEventListener("open", () => {
+    log("listener WS open (duplex)");
+    els.duplexStatus.textContent = "Connected. Waiting for audio...";
+  });
+  listenerWs.addEventListener("close", (ev) => {
+    log(`listener WS closed (${ev.code} ${ev.reason || ""})`);
+    els.duplexStatus.textContent = "Disconnected.";
+  });
+  listenerWs.addEventListener("error", () => log("listener WS error"));
+  listenerWs.addEventListener("message", (ev) => {
+    if (typeof ev.data === "string") return;  // transcripts shown via speaker WS
+    scheduleDuplexAudio(playState, ev.data);
+  });
+
+  duplexState = {
+    captureCtx,
+    micStream,
+    micSource,
+    worklet,
+    speakerWs,
+    playbackCtx,
+    destNode,
+    audioEl,
+    listenerWs,
+    playState,
+    roomName,
+  };
+
+  acquireWakeLock();
+}
+
+async function rebuildDuplexCapture() {
+  if (!duplexState) return;
+  const inputId = els.duplexInput.value;
+  let newStream;
+  try {
+    newStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        deviceId: inputId ? { exact: inputId } : undefined,
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+      video: false,
+    });
+  } catch (err) {
+    log(`switching microphone failed: ${err.message}`);
+    return;
+  }
+  try { duplexState.micSource.disconnect(); } catch {}
+  duplexState.micStream.getTracks().forEach((t) => t.stop());
+  const newSource = duplexState.captureCtx.createMediaStreamSource(newStream);
+  newSource.connect(duplexState.worklet);
+  duplexState.micSource = newSource;
+  duplexState.micStream = newStream;
+  log(`microphone switched to "${els.duplexInput.selectedOptions[0].text}"`);
+}
+
+function scheduleDuplexAudio(state, arrayBuffer) {
+  const int16 = new Int16Array(arrayBuffer);
+  if (int16.length === 0) return;
+  const float32 = new Float32Array(int16.length);
+  for (let i = 0; i < int16.length; i++) {
+    float32[i] = int16[i] / (int16[i] < 0 ? 0x8000 : 0x7fff);
+  }
+  const buf = state.audioCtx.createBuffer(1, float32.length, LISTENER_SAMPLE_RATE);
+  buf.copyToChannel(float32, 0, 0);
+  const src = state.audioCtx.createBufferSource();
+  src.buffer = buf;
+  src.connect(state.destNode);
+  const now = state.audioCtx.currentTime;
+  if (state.nextStartTime < now + 0.02) state.nextStartTime = now + 0.08;
+  src.start(state.nextStartTime);
+  state.nextStartTime += buf.duration;
+  state.scheduled += 1;
+  if (state.scheduled === 1) {
+    els.duplexStatus.textContent = "Playing translated audio.";
+  }
+}
+
+function onDuplexSpeakerMessage(ev) {
+  if (typeof ev.data !== "string") return;
+  let msg;
+  try { msg = JSON.parse(ev.data); } catch { return; }
+  if (msg.type === "transcript") {
+    if (msg.partial) els.duplexPartialSource.textContent = msg.partial;
+    if (msg.final) {
+      els.duplexPartialSource.textContent = "";
+      appendListItem(els.duplexFinalSource, msg.final);
+    }
+    if (msg.translated) appendListItem(els.duplexTranslationList, msg.translated);
+  } else if (msg.type === "status") {
+    log(msg.text || "");
+  }
+}
+
+function endDuplex() {
+  if (!duplexState) {
+    els.duplexStart.disabled = false;
+    els.duplexStop.disabled = true;
+    return;
+  }
+  const s = duplexState;
+  duplexState = null;
+  try { s.worklet.disconnect(); } catch {}
+  try { s.micSource.disconnect(); } catch {}
+  try { s.captureCtx.close(); } catch {}
+  s.micStream.getTracks().forEach((t) => t.stop());
+  try { s.speakerWs.close(); } catch {}
+  try { s.audioEl.pause(); s.audioEl.srcObject = null; } catch {}
+  try { s.playbackCtx.close(); } catch {}
+  try { s.listenerWs.close(); } catch {}
+  els.duplexStart.disabled = false;
+  els.duplexStop.disabled = true;
+  els.duplexLevelBar.style.width = "0%";
+  els.duplexStatus.textContent = "Stopped.";
+  releaseWakeLock();
+  log("duplex stopped");
 }
 
 // ---------------------------------------------------------------------------
