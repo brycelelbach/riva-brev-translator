@@ -75,8 +75,11 @@ this repo. To publish:
    paste the repo URL, runtime = **Docker Compose**.
 4. Step 2 **Configure Environment** — paste the GitHub URL of
    `docker-compose.yaml`. Click Validate.
-5. Step 3 **Jupyter and Networking** — no public port needed (Cloudflare
-   tunnel does it). Skip Jupyter.
+5. Step 3 **Jupyter and Networking** — expose port **8081** (the web app)
+   as a public port. That gives the Brev console an "Open App" button
+   pointing directly at the UI over Brev's HTTPS endpoint. The
+   `cloudflared` service still runs and publishes a `*.trycloudflare.com`
+   URL as a fallback; either URL works for `getUserMedia`. Skip Jupyter.
 6. Step 4 **Compute** — pick an L4 (24 GB) or larger. Give the VM **≥ 200
    GB** of disk.
 7. Step 5 **Publish**.
