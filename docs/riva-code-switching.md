@@ -7,7 +7,7 @@ of spoken Chinese with frequent English loanwords), the English translation
 produced by Riva's `StreamingTranslateSpeechToSpeech` pipeline was
 semantically disconnected from the source. Representative outputs:
 
-- "The computer area and the Chen vinegar area reach the network card used to connect"
+- "The computer area and the Chen vinegar area reach the network card used to connect" (the speaker actually said "KV cache" in this utterance)
 - "Mobile driver's license. We can draw some new lines specifically"
 - "biochemical things they are getting bigger"
 - "a cross on the TV"
@@ -34,12 +34,12 @@ ask two questions", "the second question is that"), which is consistent with
 the monolingual-ASR hypothesis.
 
 A useful contrast: a parallel Google Translate pass on the same audio
-rendered technical terms like "KVCache" correctly in its English output,
+rendered technical terms like "KV cache" correctly in its English output,
 while our pipeline produced none of them. The speaker did not necessarily
-utter the English string "KVCache" verbatim — they may have said it with
+utter the English string "KV cache" verbatim — they may have said it with
 Chinese intonation, or used a Chinese-language rendering of the term.
 Either way, a bilingual-aware ASR (like Google's) resolved the intent
-back to "KVCache"; the monolingual zh-CN ASR in our pipeline either
+back to "KV cache"; the monolingual zh-CN ASR in our pipeline either
 force-fit those segments to the nearest Chinese syllable or dropped them,
 and NMT has no way to reconstruct what was never transcribed. That
 Google Translate on the same audio produced the term is itself evidence
