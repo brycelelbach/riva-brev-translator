@@ -48,14 +48,19 @@ TARGET_VOICE = "Magpie-Multilingual.EN-US.Female.Neutral"
 ASR_SAMPLE_RATE = 16000
 TTS_SAMPLE_RATE = 44100
 
-# Endpointing tuned for continuous lecture-style speech: shorter silence
-# thresholds finalize utterances every few seconds, so both the TTS audio and
-# the caption panes refresh frequently instead of waiting for long pauses.
-# Values are milliseconds of silence. Riva's conformer defaults are ~800 ms
-# (stop_history) / ~1600 ms (stop_history_eou); lowering them produces more
-# frequent but shorter segments. Override via env if the speaker gets cut off.
-ASR_STOP_HISTORY_MS = int(os.environ.get("ASR_STOP_HISTORY_MS", "400"))
-ASR_STOP_HISTORY_EOU_MS = int(os.environ.get("ASR_STOP_HISTORY_EOU_MS", "800"))
+# Endpointing overrides (optional). Leaving these unset uses Riva's
+# model-tuned defaults, which give 2-4 second segments on continuous speech --
+# long enough that each segment's NMT+TTS latency is hidden by its own audio
+# length, so playback stays smooth. Lowering them below the speaker's natural
+# inter-phrase pauses fragments utterances into 2-3 word chunks and makes the
+# audio choppy. The continuously-updating English caption pane comes from
+# partial translations (below) instead.
+_stop_history_env = os.environ.get("ASR_STOP_HISTORY_MS")
+_stop_history_eou_env = os.environ.get("ASR_STOP_HISTORY_EOU_MS")
+ASR_STOP_HISTORY_MS: Optional[int] = int(_stop_history_env) if _stop_history_env else None
+ASR_STOP_HISTORY_EOU_MS: Optional[int] = (
+    int(_stop_history_eou_env) if _stop_history_eou_env else None
+)
 
 # Partial-translation throttle. The ASR emits partials ~5–10x/sec; translating
 # every one saturates NMT. We translate the current partial at most every
@@ -140,11 +145,21 @@ async def get_or_create_room(name: str) -> Room:
 # Riva worker
 
 
-def _endpointing_config() -> riva_asr_pb2.EndpointingConfig:
-    return riva_asr_pb2.EndpointingConfig(
-        stop_history=ASR_STOP_HISTORY_MS,
-        stop_history_eou=ASR_STOP_HISTORY_EOU_MS,
-    )
+def _endpointing_config() -> Optional[riva_asr_pb2.EndpointingConfig]:
+    if ASR_STOP_HISTORY_MS is None and ASR_STOP_HISTORY_EOU_MS is None:
+        return None
+    cfg = riva_asr_pb2.EndpointingConfig()
+    if ASR_STOP_HISTORY_MS is not None:
+        cfg.stop_history = ASR_STOP_HISTORY_MS
+    if ASR_STOP_HISTORY_EOU_MS is not None:
+        cfg.stop_history_eou = ASR_STOP_HISTORY_EOU_MS
+    return cfg
+
+
+def _apply_endpointing(asr_cfg: riva_asr_pb2.RecognitionConfig) -> None:
+    ep = _endpointing_config()
+    if ep is not None:
+        asr_cfg.endpointing_config.CopyFrom(ep)
 
 
 def _build_streaming_config() -> riva_nmt_pb2.StreamingTranslateSpeechToSpeechConfig:
@@ -156,7 +171,7 @@ def _build_streaming_config() -> riva_nmt_pb2.StreamingTranslateSpeechToSpeechCo
         sample_rate_hertz=ASR_SAMPLE_RATE,
         audio_channel_count=1,
     )
-    asr_cfg.endpointing_config.CopyFrom(_endpointing_config())
+    _apply_endpointing(asr_cfg)
     streaming_asr = riva_asr_pb2.StreamingRecognitionConfig(
         config=asr_cfg,
         interim_results=True,
@@ -203,7 +218,7 @@ def _run_asr_session(
             sample_rate_hertz=ASR_SAMPLE_RATE,
             audio_channel_count=1,
         )
-        asr_cfg.endpointing_config.CopyFrom(_endpointing_config())
+        _apply_endpointing(asr_cfg)
         streaming_cfg = riva_asr_pb2.StreamingRecognitionConfig(
             config=asr_cfg,
             interim_results=True,
