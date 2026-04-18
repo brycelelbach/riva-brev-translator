@@ -393,7 +393,9 @@ async function startDuplex(roomName) {
   if (!sinkSupported) {
     els.duplexOutput.disabled = true;
     els.duplexOutputHint.textContent =
-      "Output device selection is not supported by this browser; playback uses the system default.";
+      "Output device selection isn't supported on this browser (common on mobile). " +
+      "Audio follows the system default — plug in headphones or connect Bluetooth " +
+      "before tapping Start.";
   } else {
     els.duplexOutputHint.textContent = "";
   }
@@ -485,9 +487,16 @@ async function beginDuplex(roomName) {
       audio: {
         deviceId: inputId ? { exact: inputId } : undefined,
         channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
+        // IMPORTANT: leave these OFF in duplex mode. Android Chrome promotes
+        // getUserMedia with AEC/NS/AGC into VOICE_COMMUNICATION mode, which
+        // routes playback to the phone earpiece/speakerphone and bypasses
+        // Bluetooth A2DP and wired headphones. Turning them off keeps the
+        // page in MEDIA mode so headphones and BT devices receive the audio.
+        // Echo isn't a concern here because duplex users listen on
+        // headphones; no mic-feedback loop.
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
       },
       video: false,
     });
@@ -525,8 +534,12 @@ async function beginDuplex(roomName) {
   };
 
   // --- Playback side: /ws/listener -> AudioContext -> <audio>.setSinkId ----
+  // latencyHint:"playback" signals a media stream (vs "interactive" which can
+  // land in the voice-comm pipeline on Android) so the audio honors the
+  // system's media-audio routing (BT A2DP, wired headphones).
   const playbackCtx = new (window.AudioContext || window.webkitAudioContext)({
     sampleRate: LISTENER_SAMPLE_RATE,
+    latencyHint: "playback",
   });
   try { await playbackCtx.resume(); } catch {}
   const destNode = playbackCtx.createMediaStreamDestination();
@@ -593,9 +606,10 @@ async function rebuildDuplexCapture() {
       audio: {
         deviceId: inputId ? { exact: inputId } : undefined,
         channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
+        // Keep voice-processing off in duplex — see beginDuplex() comment.
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
       },
       video: false,
     });
