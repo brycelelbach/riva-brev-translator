@@ -60,6 +60,11 @@ services:
     environment:
       RIVA_URI: "riva:50051"
       WEB_PORT: "8081"
+      SESSIONS_DIR: "/app/sessions"
+    volumes:
+      # Per-session JSONL debug logs. Inspect via `ls sessions/` on the host
+      # or GET /api/sessions on the app.
+      - ./sessions:/app/sessions
     depends_on:
       riva:
         condition: service_healthy

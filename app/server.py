@@ -10,14 +10,17 @@ sides as JSON text frames for on-screen display.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import queue
+import re
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Optional, TextIO
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
@@ -73,6 +76,85 @@ PARTIAL_TRANSLATE_MIN_CHAR_DELTA = int(
     os.environ.get("PARTIAL_TRANSLATE_MIN_CHAR_DELTA", "3")
 )
 
+# Per-session JSONL logs. Disabled if SESSIONS_DIR is unset or unwritable.
+SESSIONS_DIR = Path(os.environ.get("SESSIONS_DIR", "/app/sessions"))
+
+# ---------------------------------------------------------------------------
+# Session logger
+
+
+_ROOM_NAME_SAFE_RE = re.compile(r"[^A-Za-z0-9_.-]+")
+
+
+class SessionLog:
+    """Append-only JSONL logger for a single speaker session.
+
+    Written to by multiple threads (speaker WS task, listener WS task, S2S
+    worker, parallel-ASR worker), so writes are serialized with a lock.
+    """
+
+    def __init__(self, path: Path, room: str) -> None:
+        self.path = path
+        self.room = room
+        self._lock = threading.Lock()
+        self._file: Optional[TextIO] = path.open("a", buffering=1, encoding="utf-8")
+        self._start = time.time()
+
+    def log(self, kind: str, **fields: Any) -> None:
+        f = self._file
+        if f is None:
+            return
+        now = time.time()
+        entry = {
+            "ts": round(now, 3),
+            "t_s": round(now - self._start, 3),
+            "room": self.room,
+            "kind": kind,
+        }
+        entry.update(fields)
+        line = json.dumps(entry, ensure_ascii=False)
+        with self._lock:
+            try:
+                f.write(line + "\n")
+            except Exception:  # noqa: BLE001
+                # Don't let a failed log write break the audio pipeline.
+                LOG.exception("session log write failed for room=%s", self.room)
+
+    def close(self) -> None:
+        with self._lock:
+            f = self._file
+            self._file = None
+            if f is not None:
+                try:
+                    f.close()
+                except Exception:  # noqa: BLE001
+                    pass
+
+
+def _new_session_log(room_name: str) -> Optional[SessionLog]:
+    try:
+        SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    except Exception:  # noqa: BLE001
+        LOG.warning("sessions dir %s not writable; logging disabled", SESSIONS_DIR)
+        return None
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    safe_room = _ROOM_NAME_SAFE_RE.sub("_", room_name)[:64] or "room"
+    path = SESSIONS_DIR / f"{ts}-{safe_room}.jsonl"
+    try:
+        slog = SessionLog(path, room_name)
+    except Exception:  # noqa: BLE001
+        LOG.exception("failed to open session log at %s", path)
+        return None
+    LOG.info("[room=%s] session log -> %s", room_name, path)
+    return slog
+
+
+def _slog(room: "Room", kind: str, **fields: Any) -> None:
+    """Safe shim — logs if the room has an active SessionLog, else no-op."""
+    if room.log is not None:
+        room.log.log(kind, **fields)
+
+
 # ---------------------------------------------------------------------------
 # Session state
 
@@ -119,6 +201,7 @@ class Room:
     worker: Optional[threading.Thread] = None
     asr_pump: Optional[AudioPump] = None
     asr_worker: Optional[threading.Thread] = None
+    log: Optional[SessionLog] = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def has_listener(self) -> bool:
@@ -231,8 +314,10 @@ def _run_asr_session(
         target_lang_short = TARGET_LANGUAGE.split("-")[0]
         last_partial_translate_time = 0.0
         last_partial_translate_text = ""
+        last_partial_logged = ""
 
-        def _translate(text: str) -> Optional[str]:
+        def _translate(text: str, log_kind: str) -> Optional[str]:
+            t0 = time.monotonic()
             try:
                 tr = nmt.translate(
                     texts=[text],
@@ -241,9 +326,24 @@ def _run_asr_session(
                     target_language=target_lang_short,
                 )
                 translations = list(getattr(tr, "translations", []) or [])
-                return translations[0].text if translations else None
-            except Exception:  # noqa: BLE001
+                out = translations[0].text if translations else None
+                _slog(
+                    room,
+                    log_kind,
+                    zh=text,
+                    en=out,
+                    latency_ms=round((time.monotonic() - t0) * 1000, 1),
+                )
+                return out
+            except Exception as exc:  # noqa: BLE001
                 LOG.exception("[room=%s] translate() failed", room.name)
+                _slog(
+                    room,
+                    "nmt_error",
+                    zh=text,
+                    error=repr(exc),
+                    latency_ms=round((time.monotonic() - t0) * 1000, 1),
+                )
                 return None
 
         for resp in responses:
@@ -258,13 +358,20 @@ def _run_asr_session(
                 msg: Dict[str, str] = {}
                 if is_final:
                     msg["final"] = transcript
-                    translated = _translate(transcript)
+                    _slog(room, "asr_final", zh=transcript)
+                    translated = _translate(transcript, "nmt_translated")
                     if translated is not None:
                         msg["translated"] = translated
                     last_partial_translate_time = 0.0
                     last_partial_translate_text = ""
+                    last_partial_logged = ""
                 else:
                     msg["partial"] = transcript
+                    # Log partials only when they grow, to avoid flooding with
+                    # repeated snapshots of the same hypothesis.
+                    if transcript != last_partial_logged:
+                        _slog(room, "asr_partial", zh=transcript)
+                        last_partial_logged = transcript
                     now = time.monotonic()
                     grew_enough = (
                         len(transcript) - len(last_partial_translate_text)
@@ -277,7 +384,9 @@ def _run_asr_session(
                     ):
                         last_partial_translate_time = now
                         last_partial_translate_text = transcript
-                        partial_translated = _translate(transcript)
+                        partial_translated = _translate(
+                            transcript, "nmt_partial_translated"
+                        )
                         if partial_translated is not None:
                             msg["partial_translated"] = partial_translated
                 asyncio.run_coroutine_threadsafe(
@@ -285,10 +394,18 @@ def _run_asr_session(
                 )
     except grpc.RpcError as exc:
         LOG.warning("[room=%s] ASR gRPC error: %s", room.name, exc)
-    except Exception:  # noqa: BLE001
+        _slog(
+            room,
+            "asr_grpc_error",
+            code=exc.code().name if hasattr(exc, "code") else None,
+            error=str(exc),
+        )
+    except Exception as exc:  # noqa: BLE001
         LOG.exception("[room=%s] ASR worker crashed", room.name)
+        _slog(room, "asr_worker_crash", error=repr(exc))
     finally:
         LOG.info("[room=%s] ASR worker exiting", room.name)
+        _slog(room, "asr_worker_exit")
 
 
 def _run_riva_session(
@@ -302,6 +419,18 @@ def _run_riva_session(
         "[room=%s] starting Riva S2S (%s -> %s, voice=%s)",
         room.name, SOURCE_LANGUAGE, TARGET_LANGUAGE, TARGET_VOICE,
     )
+    _slog(
+        room,
+        "s2s_start",
+        source=SOURCE_LANGUAGE,
+        target=TARGET_LANGUAGE,
+        voice=TARGET_VOICE,
+        endpointing_override={
+            "stop_history_ms": ASR_STOP_HISTORY_MS,
+            "stop_history_eou_ms": ASR_STOP_HISTORY_EOU_MS,
+        },
+    )
+    last_audio_time: Optional[float] = None
     try:
         auth = riva.client.Auth(uri=RIVA_URI)
         nmt = riva.client.NeuralMachineTranslationClient(auth)
@@ -316,23 +445,49 @@ def _run_riva_session(
             speech = getattr(resp, "speech", None)
             audio = getattr(speech, "audio", b"") if speech is not None else b""
             if audio:
+                now = time.monotonic()
+                gap_ms = (
+                    round((now - last_audio_time) * 1000, 1)
+                    if last_audio_time is not None
+                    else None
+                )
+                last_audio_time = now
+                # 16-bit mono PCM at TTS_SAMPLE_RATE -> samples = bytes/2.
+                duration_ms = round(
+                    (len(audio) / 2) / TTS_SAMPLE_RATE * 1000, 1
+                )
+                _slog(
+                    room,
+                    "tts_audio_chunk",
+                    bytes=len(audio),
+                    duration_ms=duration_ms,
+                    gap_ms=gap_ms,
+                )
                 asyncio.run_coroutine_threadsafe(
                     _broadcast_audio(room, audio), loop
                 )
     except grpc.RpcError as exc:
         LOG.warning("[room=%s] Riva gRPC error: %s", room.name, exc)
+        _slog(
+            room,
+            "s2s_grpc_error",
+            code=exc.code().name if hasattr(exc, "code") else None,
+            error=str(exc),
+        )
         asyncio.run_coroutine_threadsafe(
             _broadcast_status(room, f"Riva error: {exc.code().name if hasattr(exc, 'code') else exc}"),
             loop,
         )
     except Exception as exc:  # noqa: BLE001
         LOG.exception("[room=%s] Riva worker crashed", room.name)
+        _slog(room, "s2s_worker_crash", error=repr(exc))
         asyncio.run_coroutine_threadsafe(
             _broadcast_status(room, f"internal error: {exc}"),
             loop,
         )
     finally:
         LOG.info("[room=%s] Riva worker exiting", room.name)
+        _slog(room, "s2s_worker_exit")
 
 
 # ---------------------------------------------------------------------------
@@ -413,6 +568,32 @@ async def healthz() -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
+@app.get("/api/sessions")
+async def api_sessions_list() -> JSONResponse:
+    """List available session logs (name, bytes, mtime)."""
+    if not SESSIONS_DIR.exists():
+        return JSONResponse({"dir": str(SESSIONS_DIR), "files": []})
+    files = []
+    for p in sorted(SESSIONS_DIR.glob("*.jsonl"), reverse=True):
+        try:
+            st = p.stat()
+        except OSError:
+            continue
+        files.append({"name": p.name, "bytes": st.st_size, "mtime": int(st.st_mtime)})
+    return JSONResponse({"dir": str(SESSIONS_DIR), "files": files})
+
+
+@app.get("/api/sessions/{name}")
+async def api_session_get(name: str):
+    """Fetch a session log by filename (path traversal blocked)."""
+    if "/" in name or ".." in name or not name.endswith(".jsonl"):
+        return JSONResponse({"error": "invalid name"}, status_code=400)
+    p = SESSIONS_DIR / name
+    if not p.is_file():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return FileResponse(p, media_type="application/x-ndjson")
+
+
 @app.get("/")
 async def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
@@ -436,6 +617,7 @@ async def ws_speaker(ws: WebSocket, room_name: str) -> None:
         room.speaker = ws
         room.pump = AudioPump()
         room.asr_pump = AudioPump()
+        room.log = _new_session_log(room_name)
         loop = asyncio.get_running_loop()
         room.worker = threading.Thread(
             target=_run_riva_session,
@@ -455,6 +637,12 @@ async def ws_speaker(ws: WebSocket, room_name: str) -> None:
     LOG.info(
         "[room=%s] speaker connected (listener_present=%s)",
         room_name, room.has_listener(),
+    )
+    _slog(
+        room,
+        "speaker_connected",
+        listener_present=room.has_listener(),
+        user_agent=ws.headers.get("user-agent"),
     )
     await _safe_send_json(ws, {
         "type": "status",
@@ -479,6 +667,7 @@ async def ws_speaker(ws: WebSocket, room_name: str) -> None:
         LOG.exception("[room=%s] speaker socket error", room_name)
     finally:
         LOG.info("[room=%s] speaker disconnected", room_name)
+        _slog(room, "speaker_disconnected")
         async with room.lock:
             room.speaker = None
             if room.pump is not None:
@@ -487,6 +676,10 @@ async def ws_speaker(ws: WebSocket, room_name: str) -> None:
             if room.asr_pump is not None:
                 room.asr_pump.close()
             room.asr_pump = None
+            closing_log = room.log
+            room.log = None
+        if closing_log is not None:
+            closing_log.close()
         await _broadcast_status(room, "speaker disconnected")
 
 
@@ -504,6 +697,12 @@ async def ws_listener(ws: WebSocket, room_name: str) -> None:
     LOG.info(
         "[room=%s] listener connected (speaker_present=%s)",
         room_name, room.has_speaker(),
+    )
+    _slog(
+        room,
+        "listener_connected",
+        speaker_present=room.has_speaker(),
+        user_agent=ws.headers.get("user-agent"),
     )
     await _safe_send_json(ws, {
         "type": "status",
@@ -524,6 +723,7 @@ async def ws_listener(ws: WebSocket, room_name: str) -> None:
         LOG.exception("[room=%s] listener socket error", room_name)
     finally:
         LOG.info("[room=%s] listener disconnected", room_name)
+        _slog(room, "listener_disconnected")
         async with room.lock:
             room.listener = None
         await _broadcast_status(room, "listener disconnected")
