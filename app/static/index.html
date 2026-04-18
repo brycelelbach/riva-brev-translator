@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Riva Real-Time Translator</title>
+  <title>Riva Chinese → English Translator</title>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
   <header>
-    <h1>Riva Real-Time Translator</h1>
-    <p class="subtitle">Speak into one device &rarr; hear the translation on another.</p>
+    <h1>Riva Chinese &rarr; English Translator</h1>
+    <p class="subtitle">Speak Chinese into one device &rarr; hear the English translation on another.</p>
   </header>
 
   <main>
@@ -24,22 +24,18 @@
         <button class="role-button" data-role="speaker">
           <span class="role-emoji" aria-hidden="true">Mic</span>
           <span class="role-title">Speaker</span>
-          <span class="role-desc">Speaks English into this device's microphone.</span>
+          <span class="role-desc">Speaks Chinese into this device's microphone.</span>
         </button>
         <button class="role-button" data-role="listener">
           <span class="role-emoji" aria-hidden="true">Out</span>
           <span class="role-title">Listener</span>
-          <span class="role-desc">Plays translated audio on this device's speaker.</span>
+          <span class="role-desc">Plays the English translation on this device's speaker.</span>
         </button>
       </div>
     </section>
 
     <section id="speaker-panel" class="hidden">
-      <h2>Speaker</h2>
-      <div class="control-row">
-        <label for="target-lang">Translate English to:</label>
-        <select id="target-lang"></select>
-      </div>
+      <h2>Speaker (Chinese &rarr; English)</h2>
       <div class="control-row">
         <button id="start-capture" class="primary">Start microphone</button>
         <button id="stop-capture" class="secondary" disabled>Stop</button>
@@ -47,26 +43,26 @@
       <div id="level-meter"><div id="level-bar"></div></div>
       <div class="transcripts">
         <div>
-          <h3>Heard (English)</h3>
+          <h3>Heard (Chinese)</h3>
           <p id="partial-source" class="partial"></p>
           <ul id="final-source"></ul>
         </div>
         <div>
-          <h3>Translation</h3>
+          <h3>Translation (English)</h3>
           <ul id="translation-list"></ul>
         </div>
       </div>
     </section>
 
     <section id="listener-panel" class="hidden">
-      <h2>Listener</h2>
+      <h2>Listener (English)</h2>
       <div class="control-row">
         <button id="start-playback" class="primary">Enable playback</button>
         <span id="playback-status"></span>
       </div>
       <p class="hint">Browsers require a tap/click before playing audio. Click Enable playback, then keep this page open.</p>
       <div class="transcripts">
-        <h3>Captions</h3>
+        <h3>Captions (English)</h3>
         <p id="listener-partial" class="partial"></p>
         <ul id="listener-captions"></ul>
       </div>
@@ -79,10 +75,7 @@
   </main>
 
   <footer>
-    <p>
-      Powered by <strong>NVIDIA Riva</strong> streaming speech-to-speech translation.
-      Serving over self-signed HTTPS &mdash; your browser will warn you the first time.
-    </p>
+    <p>Powered by <strong>NVIDIA Riva</strong> streaming speech-to-speech translation.</p>
   </footer>
 
   <script src="/static/app.js" type="module"></script>

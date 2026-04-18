@@ -38,35 +38,14 @@ LOG = logging.getLogger("riva-translator")
 RIVA_URI = os.environ.get("RIVA_URI", "localhost:50051")
 STATIC_DIR = Path(__file__).parent / "static"
 
-# Quick Start streaming ASR in this launchable is English-only; that is the
-# only supported source. Target language is chosen by the speaker at runtime.
-SOURCE_LANGUAGE = "en-US"
+# This launchable does Chinese → English S2S only (demo scope). The deployed
+# streaming ASR is zh-CN and the fixed target is en-US synthesized by a Magpie
+# EN-US voice.
+SOURCE_LANGUAGE = "zh-CN"
+TARGET_LANGUAGE = "en-US"
+TARGET_VOICE = "Magpie-Multilingual.EN-US.Sofia"
 ASR_SAMPLE_RATE = 16000
 TTS_SAMPLE_RATE = 44100
-
-# Default Magpie-Multilingual voices. Names follow
-# "Magpie-Multilingual.<LANG>.<SpeakerName>" as deployed by the quickstart.
-# If a voice does not exist on your server, the UI's voice_name override lets
-# the user replace it; if still unknown, Riva will pick a default for the
-# language.
-DEFAULT_VOICES: Dict[str, str] = {
-    "es-US": "Magpie-Multilingual.ES-US.Diego",
-    "fr-FR": "Magpie-Multilingual.FR-FR.Lea",
-    "de-DE": "Magpie-Multilingual.DE-DE.Ralph",
-    "zh-CN": "Magpie-Multilingual.ZH-CN.Guo",
-    "it-IT": "Magpie-Multilingual.IT-IT.Giulia",
-    "vi-VN": "Magpie-Multilingual.VI-VN.Khanh",
-    "en-US": "Magpie-Multilingual.EN-US.Sofia",
-}
-
-TARGET_LANGUAGES = [
-    {"code": "es-US", "name": "Spanish"},
-    {"code": "fr-FR", "name": "French"},
-    {"code": "de-DE", "name": "German"},
-    {"code": "zh-CN", "name": "Chinese (Simplified)"},
-    {"code": "it-IT", "name": "Italian"},
-    {"code": "vi-VN", "name": "Vietnamese"},
-]
 
 # ---------------------------------------------------------------------------
 # Session state
@@ -110,8 +89,6 @@ class Room:
     name: str
     speaker: Optional[WebSocket] = None
     listener: Optional[WebSocket] = None
-    target_lang: str = "es-US"
-    voice: str = DEFAULT_VOICES["es-US"]
     pump: Optional[AudioPump] = None
     worker: Optional[threading.Thread] = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -140,7 +117,7 @@ async def get_or_create_room(name: str) -> Room:
 # Riva worker
 
 
-def _build_streaming_config(target_lang: str, voice: str) -> riva_nmt_pb2.StreamingTranslateSpeechToSpeechConfig:
+def _build_streaming_config() -> riva_nmt_pb2.StreamingTranslateSpeechToSpeechConfig:
     asr_cfg = riva_asr_pb2.RecognitionConfig(
         encoding=riva_audio_pb2.LINEAR_PCM,
         language_code=SOURCE_LANGUAGE,
@@ -155,12 +132,12 @@ def _build_streaming_config(target_lang: str, voice: str) -> riva_nmt_pb2.Stream
     )
     translation_cfg = riva_nmt_pb2.TranslationConfig(
         source_language_code=SOURCE_LANGUAGE,
-        target_language_code=target_lang,
+        target_language_code=TARGET_LANGUAGE,
     )
     tts_cfg = riva_nmt_pb2.SynthesizeSpeechConfig(
         encoding=riva_audio_pb2.LINEAR_PCM,
-        language_code=target_lang,
-        voice_name=voice,
+        language_code=TARGET_LANGUAGE,
+        voice_name=TARGET_VOICE,
         sample_rate_hz=TTS_SAMPLE_RATE,
     )
     return riva_nmt_pb2.StreamingTranslateSpeechToSpeechConfig(
@@ -203,20 +180,18 @@ def _extract_transcripts(resp) -> Dict[str, str]:
 def _run_riva_session(
     room: Room,
     pump: AudioPump,
-    target_lang: str,
-    voice: str,
     loop: asyncio.AbstractEventLoop,
 ) -> None:
     """Blocking worker that relays audio/text between Riva and the room."""
 
     LOG.info(
-        "[room=%s] starting Riva S2S (target=%s voice=%s)",
-        room.name, target_lang, voice,
+        "[room=%s] starting Riva S2S (%s -> %s, voice=%s)",
+        room.name, SOURCE_LANGUAGE, TARGET_LANGUAGE, TARGET_VOICE,
     )
     try:
         auth = riva.client.Auth(uri=RIVA_URI)
         nmt = riva.client.NeuralMachineTranslationClient(auth)
-        streaming_cfg = _build_streaming_config(target_lang, voice)
+        streaming_cfg = _build_streaming_config()
 
         responses = nmt.streaming_s2s_response_generator(
             audio_chunks=pump,
@@ -307,8 +282,8 @@ app = FastAPI(title="Riva Real-Time Translator")
 async def api_config() -> JSONResponse:
     return JSONResponse({
         "source_language": SOURCE_LANGUAGE,
-        "target_languages": TARGET_LANGUAGES,
-        "default_voices": DEFAULT_VOICES,
+        "target_language": TARGET_LANGUAGE,
+        "target_voice": TARGET_VOICE,
         "asr_sample_rate": ASR_SAMPLE_RATE,
         "tts_sample_rate": TTS_SAMPLE_RATE,
     })
@@ -323,7 +298,6 @@ async def api_room_status(name: str) -> JSONResponse:
         "exists": True,
         "has_speaker": room.has_speaker(),
         "has_listener": room.has_listener(),
-        "target_lang": room.target_lang,
     })
 
 
@@ -344,18 +318,8 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.websocket("/ws/speaker/{room_name}")
-async def ws_speaker(
-    ws: WebSocket,
-    room_name: str,
-    target_lang: str = "es-US",
-    voice: Optional[str] = None,
-) -> None:
+async def ws_speaker(ws: WebSocket, room_name: str) -> None:
     await ws.accept()
-    if target_lang not in {l["code"] for l in TARGET_LANGUAGES}:
-        await ws.close(code=1008, reason=f"unsupported target_lang {target_lang}")
-        return
-
-    resolved_voice = voice or DEFAULT_VOICES.get(target_lang, "")
     room = await get_or_create_room(room_name)
 
     async with room.lock:
@@ -363,25 +327,23 @@ async def ws_speaker(
             await ws.close(code=1008, reason="room already has a speaker")
             return
         room.speaker = ws
-        room.target_lang = target_lang
-        room.voice = resolved_voice
         room.pump = AudioPump()
         loop = asyncio.get_running_loop()
         room.worker = threading.Thread(
             target=_run_riva_session,
-            args=(room, room.pump, target_lang, resolved_voice, loop),
+            args=(room, room.pump, loop),
             name=f"riva-{room_name}",
             daemon=True,
         )
         room.worker.start()
 
     LOG.info(
-        "[room=%s] speaker connected (target=%s, listener_present=%s)",
-        room_name, target_lang, room.has_listener(),
+        "[room=%s] speaker connected (listener_present=%s)",
+        room_name, room.has_listener(),
     )
     await _safe_send_json(ws, {
         "type": "status",
-        "text": f"Connected as speaker. Target language: {target_lang}.",
+        "text": f"Connected as speaker. Translating {SOURCE_LANGUAGE} → {TARGET_LANGUAGE}.",
     })
     await _broadcast_status(room, "speaker connected")
 

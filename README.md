@@ -1,7 +1,8 @@
-# Riva Real-Time Translator — Brev Launchable
+# Riva Chinese → English Translator — Brev Launchable
 
-Real-time speech-to-speech translation using NVIDIA Riva's
-`StreamingTranslateSpeechToSpeech` gRPC API. Three docker-compose services:
+Real-time **Chinese → English** speech-to-speech translation using NVIDIA
+Riva's `StreamingTranslateSpeechToSpeech` gRPC API. Three docker-compose
+services:
 
 | Service       | What it does                                                       | Ports |
 |---|---|---|
@@ -11,9 +12,8 @@ Real-time speech-to-speech translation using NVIDIA Riva's
 
 Open the `https://*.trycloudflare.com` URL printed at the end of the deploy on
 **two** devices, enter the same room code on both, pick *Speaker* on one and
-*Listener* on the other, and start talking. English speech on the speaker
-device is translated in real time and played back in the target language on
-the listener device.
+*Listener* on the other, and start speaking Chinese. The English translation
+plays back in real time on the listener device.
 
 The Cloudflare tunnel gives the browser a real CA-signed TLS cert (required
 for `getUserMedia`) without needing DNS or security-group changes — convenient
@@ -57,8 +57,8 @@ docker logs riva-translator-tunnel 2>&1 \
 Navigate to the `https://*.trycloudflare.com` URL on each device.
 
 1. Type the same room code (any short string, e.g. `alpha`).
-2. On one device tap **Speaker** → pick a target language → **Start
-   microphone**.
+2. On one device tap **Speaker** → **Start microphone** and begin speaking
+   Chinese.
 3. On the other device tap **Listener** → **Enable playback** (the click
    gesture is required by browsers before audio can start).
 
@@ -90,12 +90,17 @@ download is gated on the key.
 
 ## Supported languages
 
-- **Source** — English (`en-US`). The quickstart streaming ASR deployed
-  here is English-only.
-- **Targets** — Spanish, French, German, Chinese (Simplified), Italian,
-  Vietnamese. These match the Riva *Magpie-Multilingual* TTS voice set. The
-  underlying NMT model (Megatron 1B any-to-any) supports 36 languages;
-  adding more targets is possible if you deploy additional TTS voices.
+- **Source** — Chinese Simplified (`zh-CN`). Deployed via the `conformer`
+  streaming ASR acoustic model, which supports zh-CN per the quickstart's
+  `asr_models_languages_map`.
+- **Target** — English (`en-US`). Synthesized through the
+  *Magpie-Multilingual* TTS voice `Magpie-Multilingual.EN-US.Sofia`.
+
+The underlying NMT model (Megatron 1B any-to-any) supports 36 languages, so
+re-targeting this launchable to a different language pair is a matter of
+swapping the ASR acoustic/language flags in `bootstrap.sh` and the
+`SOURCE_LANGUAGE` / `TARGET_LANGUAGE` / `TARGET_VOICE` constants in
+`app/server.py`.
 
 ## Architecture
 

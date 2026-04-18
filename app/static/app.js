@@ -15,7 +15,6 @@ const els = {
   setup: document.getElementById("setup"),
   speakerPanel: document.getElementById("speaker-panel"),
   listenerPanel: document.getElementById("listener-panel"),
-  targetLang: document.getElementById("target-lang"),
   startCapture: document.getElementById("start-capture"),
   stopCapture: document.getElementById("stop-capture"),
   levelBar: document.getElementById("level-bar"),
@@ -29,23 +28,7 @@ const els = {
   statusLog: document.getElementById("status-log"),
 };
 
-let cfg = null;
-
 (async function init() {
-  // Hydrate languages dropdown.
-  try {
-    const r = await fetch("/api/config");
-    cfg = await r.json();
-    for (const lang of cfg.target_languages) {
-      const opt = document.createElement("option");
-      opt.value = lang.code;
-      opt.textContent = lang.name;
-      els.targetLang.appendChild(opt);
-    }
-  } catch (err) {
-    log(`Failed to load /api/config: ${err}`);
-  }
-
   // Restore previous room code if any.
   const saved = localStorage.getItem("room");
   if (saved) els.room.value = saved;
@@ -113,8 +96,6 @@ async function startCapture(roomName) {
   els.finalSource.innerHTML = "";
   els.translationList.innerHTML = "";
 
-  const targetLang = els.targetLang.value;
-
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({
@@ -150,13 +131,11 @@ async function startCapture(roomName) {
   src.connect(worklet);
   // Do NOT connect worklet to destination -- avoids echo.
 
-  const wsUrl = buildWsUrl(
-    `/ws/speaker/${encodeURIComponent(roomName)}?target_lang=${encodeURIComponent(targetLang)}`
-  );
+  const wsUrl = buildWsUrl(`/ws/speaker/${encodeURIComponent(roomName)}`);
   const ws = new WebSocket(wsUrl);
   ws.binaryType = "arraybuffer";
 
-  ws.addEventListener("open", () => log(`speaker WS open (target=${targetLang})`));
+  ws.addEventListener("open", () => log("speaker WS open (zh-CN → en-US)"));
   ws.addEventListener("close", (ev) => log(`speaker WS closed (${ev.code} ${ev.reason || ""})`));
   ws.addEventListener("error", () => log("speaker WS error"));
   ws.addEventListener("message", (ev) => onSpeakerMessage(ev));

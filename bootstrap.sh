@@ -101,6 +101,11 @@ set_flag service_enabled_asr true
 set_flag service_enabled_nlp false
 set_flag service_enabled_tts true
 set_flag service_enabled_nmt true
+# Swap the default English-only ASR for the Chinese variant (demo only
+# translates zh → en). `conformer` supports zh-CN per the quickstart's
+# asr_models_languages_map.
+set_flag asr_acoustic_model '("conformer")'
+set_flag asr_language_code '("zh-CN")'
 # Use Magpie-Multilingual TTS so we can synthesize translations in
 # es, fr, de, zh, it, vi (and en) through a single deployed model.
 set_flag tts_model '"magpie"'
