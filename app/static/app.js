@@ -23,6 +23,7 @@ const els = {
   duplexPartialTranslation: document.getElementById("duplex-partial-translation"),
   duplexTranslationList: document.getElementById("duplex-translation-list"),
   muteOutput: document.getElementById("mute-output"),
+  echoCancel: document.getElementById("echo-cancel"),
   statusLog: document.getElementById("status-log"),
 };
 
@@ -51,8 +52,27 @@ const sessionId = generateSessionId();
     }
   };
   els.muteOutput.onchange = () => applyMute();
+  els.echoCancel.onchange = () => {
+    if (duplexState) rebuildDuplexCapture();
+  };
   log(`session ${sessionId}`);
 })();
+
+function micConstraints() {
+  // Echo cancellation (+ noise suppression + AGC) is bundled into one
+  // toggle. On Android Chrome, turning these ON promotes the stream into
+  // VOICE_COMMUNICATION mode, which routes playback through the earpiece
+  // and bypasses Bluetooth A2DP; leave them OFF there. On desktop, they
+  // prevent speaker-to-mic acoustic feedback from self-sustaining the
+  // ASR→NMT→TTS loop. Default ON — the common case is a laptop with
+  // built-in mic+speakers.
+  const on = els.echoCancel.checked;
+  return {
+    echoCancellation: on,
+    noiseSuppression: on,
+    autoGainControl: on,
+  };
+}
 
 function generateSessionId() {
   if (window.crypto && typeof crypto.randomUUID === "function") {
@@ -198,13 +218,7 @@ async function beginDuplex() {
       audio: {
         deviceId: inputId ? { exact: inputId } : undefined,
         channelCount: 1,
-        // Leave voice processing OFF: Android Chrome otherwise promotes the
-        // stream into VOICE_COMMUNICATION mode, which routes playback through
-        // the earpiece/speakerphone and bypasses A2DP and wired headphones.
-        // Echo is not a concern because duplex users wear headphones.
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
+        ...micConstraints(),
       },
       video: false,
     });
@@ -370,14 +384,12 @@ async function rebuildDuplexCapture() {
       audio: {
         deviceId: inputId ? { exact: inputId } : undefined,
         channelCount: 1,
-        echoCancellation: false,
-        noiseSuppression: false,
-        autoGainControl: false,
+        ...micConstraints(),
       },
       video: false,
     });
   } catch (err) {
-    log(`switching microphone failed: ${err.message}`);
+    log(`rebuilding capture failed: ${err.message}`);
     return;
   }
   try { duplexState.micSource.disconnect(); } catch {}
@@ -386,7 +398,7 @@ async function rebuildDuplexCapture() {
   newSource.connect(duplexState.worklet);
   duplexState.micSource = newSource;
   duplexState.micStream = newStream;
-  log(`microphone switched to "${els.duplexInput.selectedOptions[0].text}"`);
+  log(`capture rebuilt (mic="${els.duplexInput.selectedOptions[0].text}", AEC ${els.echoCancel.checked ? "on" : "off"})`);
 }
 
 function scheduleDuplexAudio(state, arrayBuffer) {
