@@ -413,13 +413,6 @@ function scheduleDuplexAudio(state, arrayBuffer) {
   }
 }
 
-// Riva's zh-CN ASR occasionally emits pure-English fragments when it
-// catches English speech ("Does she", "gee", "F. C."). Those don't belong
-// in a pane labeled "Heard (Chinese)" — filter anything with no CJK. Mixed
-// code-switched content ("that was，all些类。") keeps the 些类 and shows.
-const CJK_RE = /[\u3400-\u9fff\uf900-\ufaff]/;
-const hasCJK = (s) => CJK_RE.test(s);
-
 function onSessionMessage(ev) {
   if (typeof ev.data !== "string") {
     if (duplexState) scheduleDuplexAudio(duplexState.playState, ev.data);
@@ -428,13 +421,11 @@ function onSessionMessage(ev) {
   let msg;
   try { msg = JSON.parse(ev.data); } catch { return; }
   if (msg.type === "transcript") {
-    if (msg.partial && hasCJK(msg.partial)) {
-      els.duplexPartialSource.textContent = msg.partial;
-    }
+    if (msg.partial) els.duplexPartialSource.textContent = msg.partial;
     if (msg.partial_translated) {
       els.duplexPartialTranslation.textContent = msg.partial_translated;
     }
-    if (msg.final && hasCJK(msg.final)) {
+    if (msg.final) {
       els.duplexPartialSource.textContent = "";
       appendListItem(els.duplexFinalSource, msg.final);
     }
