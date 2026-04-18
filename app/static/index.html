@@ -9,83 +9,25 @@
 <body>
   <header>
     <h1>Riva Chinese &rarr; English Translator</h1>
-    <p class="subtitle">Speak Chinese, hear English &mdash; on one device or split between two.</p>
+    <p class="subtitle">Speak Chinese into this device's microphone; hear English through its speaker.</p>
   </header>
 
   <main>
-    <section id="setup">
-      <h2>1. Choose a room</h2>
-      <label for="room">Room code</label>
-      <input id="room" type="text" autocomplete="off" placeholder="e.g. alpha-42" />
-      <p class="hint">Type the same room code on both devices. Any short string works.</p>
-
-      <h2>2. Pick a role</h2>
-      <div class="role-grid">
-        <button class="role-button" data-role="duplex">
-          <span class="role-emoji" aria-hidden="true">Both</span>
-          <span class="role-title">This device</span>
-          <span class="role-desc">Mic and speaker on one device. Pick separate input/output.</span>
-        </button>
-        <button class="role-button" data-role="speaker">
-          <span class="role-emoji" aria-hidden="true">Mic</span>
-          <span class="role-title">Speaker</span>
-          <span class="role-desc">Speaks Chinese into this device's microphone.</span>
-        </button>
-        <button class="role-button" data-role="listener">
-          <span class="role-emoji" aria-hidden="true">Out</span>
-          <span class="role-title">Listener</span>
-          <span class="role-desc">Plays the English translation on this device's speaker.</span>
-        </button>
-      </div>
-    </section>
-
-    <section id="speaker-panel" class="hidden">
-      <h2>Speaker (Chinese &rarr; English)</h2>
-      <div class="control-row">
-        <button id="start-capture" class="primary">Start microphone</button>
-        <button id="stop-capture" class="secondary" disabled>Stop</button>
-      </div>
-      <div class="level-meter"><div id="level-bar" class="level-bar"></div></div>
-      <div class="transcripts">
-        <div>
-          <h3>Heard (Chinese)</h3>
-          <p id="partial-source" class="partial"></p>
-          <ul id="final-source"></ul>
-        </div>
-        <div>
-          <h3>Translation (English)</h3>
-          <p id="partial-translation" class="partial"></p>
-          <ul id="translation-list"></ul>
-        </div>
-      </div>
-    </section>
-
-    <section id="listener-panel" class="hidden">
-      <h2>Listener (English)</h2>
-      <div class="control-row">
-        <button id="start-playback" class="primary">Enable playback</button>
-        <span id="playback-status"></span>
-      </div>
-      <p class="hint">Browsers require a tap/click before playing audio. Click Enable playback, then keep this page open.</p>
-      <div class="transcripts">
-        <h3>Captions (English)</h3>
-        <p id="listener-partial" class="partial"></p>
-        <ul id="listener-captions"></ul>
-      </div>
-    </section>
-
-    <section id="duplex-panel" class="hidden">
-      <h2>Both (single device, Chinese &rarr; English)</h2>
+    <section id="duplex-panel">
       <div class="control-row">
         <button id="duplex-start" class="primary">Start</button>
         <button id="duplex-stop" class="secondary" disabled>Stop</button>
+        <label class="toggle">
+          <input id="mute-output" type="checkbox" />
+          <span>Listen only (mute output)</span>
+        </label>
         <span id="duplex-status"></span>
       </div>
       <div class="device-row">
         <label for="duplex-input">Microphone</label>
         <select id="duplex-input"><option value="">Default microphone</option></select>
       </div>
-      <div class="device-row">
+      <div class="device-row" id="duplex-output-row">
         <label for="duplex-output">Speaker</label>
         <select id="duplex-output"><option value="">Default speaker</option></select>
       </div>

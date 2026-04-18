@@ -86,60 +86,20 @@ input[type=text]:focus, select:focus {
   margin: 0.25rem 0 1rem;
 }
 
-.role-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 0.75rem;
-}
-
-.role-button {
-  background: var(--panel-2);
-  border: 1px solid var(--border);
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
   color: var(--text);
-  padding: 1.25rem;
-  border-radius: 8px;
-  cursor: pointer;
-  text-align: left;
-  font: inherit;
-  transition: border-color 0.15s, transform 0.05s;
-}
-
-.role-button:hover {
-  border-color: var(--accent);
-}
-
-.role-button:active {
-  transform: translateY(1px);
-}
-
-.role-button.selected {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(118, 185, 0, 0.3);
-}
-
-.role-emoji {
-  display: inline-block;
-  font-weight: 700;
-  font-size: 0.7rem;
-  letter-spacing: 0.1em;
-  background: var(--accent);
-  color: #0b1020;
-  padding: 0.15rem 0.45rem;
-  border-radius: 4px;
-  margin-bottom: 0.5rem;
-}
-
-.role-title {
-  display: block;
-  font-size: 1.1rem;
-  font-weight: 600;
-}
-
-.role-desc {
-  display: block;
-  color: var(--muted);
   font-size: 0.9rem;
-  margin-top: 0.25rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.toggle input[type=checkbox] {
+  accent-color: var(--accent);
+  width: 1rem;
+  height: 1rem;
 }
 
 .control-row {
@@ -226,7 +186,7 @@ button.secondary:disabled {
   gap: 1rem;
 }
 
-#listener-panel .transcripts {
+.transcripts.single {
   grid-template-columns: 1fr;
 }
 
