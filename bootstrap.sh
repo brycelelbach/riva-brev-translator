@@ -23,7 +23,9 @@ cd "$REPO_ROOT"
 
 RIVA_VERSION="2.19.0"
 QUICKSTART_DIR="riva_quickstart_v${RIVA_VERSION}"
-QUICKSTART_MARKER="${QUICKSTART_DIR}/.riva_init_done"
+# Marker is (language, model)-specific: changing SOURCE_LANGUAGE or
+# ASR_ACOUSTIC_MODEL in .env and re-running bootstrap triggers a fresh
+# riva_init.sh so the right model gets deployed.
 
 log()  { printf '\033[1;34m[bootstrap]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[bootstrap]\033[0m %s\n' "$*" >&2; }
@@ -101,11 +103,17 @@ set_flag service_enabled_asr true
 set_flag service_enabled_nlp false
 set_flag service_enabled_tts true
 set_flag service_enabled_nmt true
-# Swap the default English-only ASR for the Chinese variant (demo only
-# translates zh → en). `conformer` supports zh-CN per the quickstart's
-# asr_models_languages_map.
-set_flag asr_acoustic_model '("conformer")'
-set_flag asr_language_code '("zh-CN")'
+# ASR is the one Riva service whose deployed model is language-specific;
+# pick it here based on SOURCE_LANGUAGE from .env so the user can configure
+# the source language at bootstrap time. `conformer` (the default) supports
+# en-US, de-DE, es-US, es-ES, fr-FR, it-IT, ja-JP, ko-KR, pt-BR, ru-RU,
+# zh-CN per Riva 2.19's asr_models_languages_map.
+SOURCE_LANGUAGE="${SOURCE_LANGUAGE:-zh-CN}"
+ASR_ACOUSTIC_MODEL="${ASR_ACOUSTIC_MODEL:-conformer}"
+log "ASR: deploying ${ASR_ACOUSTIC_MODEL} for ${SOURCE_LANGUAGE}"
+set_flag asr_acoustic_model "(\"${ASR_ACOUSTIC_MODEL}\")"
+set_flag asr_language_code "(\"${SOURCE_LANGUAGE}\")"
+QUICKSTART_MARKER="${QUICKSTART_DIR}/.riva_init_done_${ASR_ACOUSTIC_MODEL}_${SOURCE_LANGUAGE}"
 # Use Magpie-Multilingual TTS so we can synthesize translations in
 # es, fr, de, zh, it, vi (and en) through a single deployed model.
 set_flag tts_model '"magpie"'

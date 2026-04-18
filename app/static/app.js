@@ -25,9 +25,15 @@ const els = {
   muteOutput: document.getElementById("mute-output"),
   echoCancel: document.getElementById("echo-cancel"),
   statusLog: document.getElementById("status-log"),
+  appTitle: document.getElementById("app-title"),
+  appSubtitle: document.getElementById("app-subtitle"),
+  sourceLangLabel: document.getElementById("source-lang-label"),
+  targetLangLabel: document.getElementById("target-lang-label"),
 };
 
 const sessionId = generateSessionId();
+// Populated by loadAppConfig() on startup; used by installMediaSession.
+let appConfig = { source_language: "", target_language: "" };
 
 (function init() {
   els.duplexStart.onclick = () => beginDuplex();
@@ -56,7 +62,40 @@ const sessionId = generateSessionId();
     if (duplexState) rebuildDuplexCapture();
   };
   log(`session ${sessionId}`);
+  loadAppConfig();
 })();
+
+async function loadAppConfig() {
+  try {
+    const resp = await fetch("/api/config");
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    appConfig = await resp.json();
+  } catch (err) {
+    log(`config fetch failed: ${err.message}`);
+    return;
+  }
+  const srcName = languageName(appConfig.source_language);
+  const tgtName = languageName(appConfig.target_language);
+  els.sourceLangLabel.textContent = srcName;
+  els.targetLangLabel.textContent = tgtName;
+  els.appSubtitle.textContent =
+    `Speak ${srcName} into this device's microphone; hear ${tgtName} through its speaker.`;
+  document.title = `Riva ${srcName} \u2192 ${tgtName} Translator`;
+}
+
+function languageName(bcp47) {
+  // Render a short language name ("Chinese", "English") from a BCP-47 code.
+  // Intl.DisplayNames handles the locale data; falls back to the raw code
+  // if the browser lacks support or the code is empty.
+  if (!bcp47) return "";
+  const base = bcp47.split("-")[0];
+  try {
+    const dn = new Intl.DisplayNames(["en"], { type: "language" });
+    return dn.of(base) || bcp47;
+  } catch {
+    return bcp47;
+  }
+}
 
 function micConstraints() {
   // Echo cancellation (+ noise suppression + AGC) is bundled into one
@@ -517,9 +556,11 @@ function buildSilentWavDataUrl(seconds) {
 function installMediaSession(audioEl) {
   if (!("mediaSession" in navigator)) return null;
   try {
+    const srcName = languageName(appConfig.source_language) || "source";
+    const tgtName = languageName(appConfig.target_language) || "target";
     navigator.mediaSession.metadata = new window.MediaMetadata({
       title: "Live translation",
-      artist: "Chinese \u2192 English",
+      artist: `${srcName} \u2192 ${tgtName}`,
       album: "Riva",
     });
     navigator.mediaSession.playbackState = "playing";

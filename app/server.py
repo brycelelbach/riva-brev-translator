@@ -44,12 +44,14 @@ LOG = logging.getLogger("riva-translator")
 RIVA_URI = os.environ.get("RIVA_URI", "localhost:50051")
 STATIC_DIR = Path(__file__).parent / "static"
 
-# This launchable does Chinese → English S2S only (demo scope). The deployed
-# streaming ASR is zh-CN and the fixed target is en-US synthesized by a Magpie
-# EN-US voice.
-SOURCE_LANGUAGE = "zh-CN"
-TARGET_LANGUAGE = "en-US"
-TARGET_VOICE = "Magpie-Multilingual.EN-US.Female.Neutral"
+# Language pair is configured via .env at bootstrap time. SOURCE_LANGUAGE
+# must match the ASR model deployed by ./bootstrap.sh; TARGET_VOICE must
+# match a Magpie-Multilingual subvoice for TARGET_LANGUAGE.
+SOURCE_LANGUAGE = os.environ.get("SOURCE_LANGUAGE", "zh-CN")
+TARGET_LANGUAGE = os.environ.get("TARGET_LANGUAGE", "en-US")
+TARGET_VOICE = os.environ.get(
+    "TARGET_VOICE", "Magpie-Multilingual.EN-US.Female.Neutral"
+)
 ASR_SAMPLE_RATE = 16000
 TTS_SAMPLE_RATE = 44100
 

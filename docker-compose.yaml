@@ -61,6 +61,13 @@ services:
       RIVA_URI: "riva:50051"
       WEB_PORT: "8081"
       SESSIONS_DIR: "/app/sessions"
+      # Languages are read from the host's .env via compose interpolation
+      # (compose auto-sources .env in the project dir). Change in .env, then
+      # `docker compose up -d` to restart the app. To change SOURCE_LANGUAGE
+      # also re-run ./bootstrap.sh so Riva redeploys the ASR model.
+      SOURCE_LANGUAGE: "${SOURCE_LANGUAGE:-zh-CN}"
+      TARGET_LANGUAGE: "${TARGET_LANGUAGE:-en-US}"
+      TARGET_VOICE: "${TARGET_VOICE:-Magpie-Multilingual.EN-US.Female.Neutral}"
     volumes:
       # Per-session JSONL debug logs. Inspect via `ls sessions/` on the host
       # or GET /api/sessions on the app.

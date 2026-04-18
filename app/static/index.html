@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Riva Chinese → English Translator</title>
+  <title>Riva Speech Translator</title>
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
   <header>
-    <h1>Riva Chinese &rarr; English Translator</h1>
-    <p class="subtitle">Speak Chinese into this device's microphone; hear English through its speaker.</p>
+    <h1 id="app-title">Riva Speech Translator</h1>
+    <p class="subtitle" id="app-subtitle">Loading language configuration&hellip;</p>
   </header>
 
   <main>
@@ -39,12 +39,12 @@
       <div class="level-meter"><div id="duplex-level-bar" class="level-bar"></div></div>
       <div class="transcripts">
         <div>
-          <h3>Heard (Chinese)</h3>
+          <h3>Heard (<span id="source-lang-label">source</span>)</h3>
           <p id="duplex-partial-source" class="partial"></p>
           <ul id="duplex-final-source"></ul>
         </div>
         <div>
-          <h3>Translation (English)</h3>
+          <h3>Translation (<span id="target-lang-label">target</span>)</h3>
           <p id="duplex-partial-translation" class="partial"></p>
           <ul id="duplex-translation-list"></ul>
         </div>

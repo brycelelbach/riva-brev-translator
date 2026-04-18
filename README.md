@@ -1,8 +1,9 @@
-# Riva Chinese → English Translator — Brev Launchable
+# Riva Speech Translator — Brev Launchable
 
-Real-time **Chinese → English** speech-to-speech translation using NVIDIA
-Riva's `StreamingTranslateSpeechToSpeech` gRPC API. Three docker-compose
-services:
+Real-time speech-to-speech translation using NVIDIA Riva's
+`StreamingTranslateSpeechToSpeech` gRPC API. Source and target languages
+are configured in `.env` at bootstrap time (default: Chinese → English).
+Three docker-compose services:
 
 | Service       | What it does                                                       | Ports |
 |---|---|---|
@@ -10,10 +11,10 @@ services:
 | `app`         | FastAPI web UI that pairs a speaker device with a listener device  | `8081` HTTP |
 | `cloudflared` | Cloudflare quick tunnel → publishes the app at `https://*.trycloudflare.com` | — |
 
-Open the `https://*.trycloudflare.com` URL printed at the end of the deploy on
-**two** devices, enter the same room code on both, pick *Speaker* on one and
-*Listener* on the other, and start speaking Chinese. The English translation
-plays back in real time on the listener device.
+Open the `https://*.trycloudflare.com` URL printed at the end of the deploy
+on a device with a mic and speaker, hit **Start**, and speak the configured
+source language. The translated audio plays back in real time through the
+same device.
 
 The Cloudflare tunnel gives the browser a real CA-signed TLS cert (required
 for `getUserMedia`) without needing DNS or security-group changes — convenient
@@ -35,9 +36,9 @@ for a single-click launchable.
 ## First-time setup (Brev VM or any Linux host)
 
 ```bash
-# 1. Create .env with your NGC key
+# 1. Create .env: paste your NGC key and (optionally) pick the language pair.
 cp .env.example .env
-$EDITOR .env        # paste your NGC_API_KEY
+$EDITOR .env        # NGC_API_KEY, SOURCE_LANGUAGE, TARGET_LANGUAGE, TARGET_VOICE
 
 # 2. Download Riva + deploy models into a docker volume (takes 30-60 min)
 ./bootstrap.sh
@@ -54,13 +55,10 @@ docker logs riva-translator-tunnel 2>&1 \
 
 ### Opening the UI
 
-Navigate to the `https://*.trycloudflare.com` URL on each device.
-
-1. Type the same room code (any short string, e.g. `alpha`).
-2. On one device tap **Speaker** → **Start microphone** and begin speaking
-   Chinese.
-3. On the other device tap **Listener** → **Enable playback** (the click
-   gesture is required by browsers before audio can start).
+Navigate to the `https://*.trycloudflare.com` URL, hit **Start**, and begin
+speaking the source language. Translated audio plays back through the same
+device. "Listen only" mutes local output (for debugging); "Echo cancellation"
+breaks the speaker-to-mic feedback loop when using built-in hardware.
 
 Quick-tunnel URLs are random and regenerate whenever `cloudflared` restarts.
 For a stable URL, replace the `cloudflared` service with a named tunnel
@@ -90,17 +88,27 @@ download is gated on the key.
 
 ## Supported languages
 
-- **Source** — Chinese Simplified (`zh-CN`). Deployed via the `conformer`
-  streaming ASR acoustic model, which supports zh-CN per the quickstart's
-  `asr_models_languages_map`.
-- **Target** — English (`en-US`). Synthesized through the
-  *Magpie-Multilingual* TTS voice `Magpie-Multilingual.EN-US.Sofia`.
+Language pair is chosen in `.env` before `./bootstrap.sh` and baked into the
+deployed Riva models.
 
-The underlying NMT model (Megatron 1B any-to-any) supports 36 languages, so
-re-targeting this launchable to a different language pair is a matter of
-swapping the ASR acoustic/language flags in `bootstrap.sh` and the
-`SOURCE_LANGUAGE` / `TARGET_LANGUAGE` / `TARGET_VOICE` constants in
-`app/server.py`.
+- **`SOURCE_LANGUAGE`** — BCP-47 code for what the user speaks. The default
+  `conformer` ASR acoustic model covers: `en-US`, `de-DE`, `es-US`, `es-ES`,
+  `fr-FR`, `it-IT`, `ja-JP`, `ko-KR`, `pt-BR`, `ru-RU`, `zh-CN` (per Riva
+  2.19's `asr_models_languages_map`). Override with `ASR_ACOUSTIC_MODEL`
+  (e.g. `parakeet-1.1b` for higher-quality English-only).
+- **`TARGET_LANGUAGE`** — BCP-47 code for the output. NMT (Megatron 1B
+  any-to-any) supports 36 languages; TTS is the bottleneck — Riva 2.19's
+  Magpie-Multilingual quickstart ships only `en-US`, `es-US`, `fr-FR`
+  subvoices.
+- **`TARGET_VOICE`** — Magpie voice_name for the target, e.g.
+  `Magpie-Multilingual.EN-US.Female.Neutral`. Must match a deployed subvoice
+  for `TARGET_LANGUAGE`.
+
+Changing `SOURCE_LANGUAGE` (or `ASR_ACOUSTIC_MODEL`) requires re-running
+`./bootstrap.sh` so Riva redeploys the ASR model; the bootstrap marker is
+per `(language, model)` so switching triggers a fresh deploy automatically.
+Changing `TARGET_LANGUAGE` or `TARGET_VOICE` only needs
+`docker compose up -d` to restart the app.
 
 ## Architecture
 
@@ -131,7 +139,7 @@ with a small jitter buffer.
 |---|---|
 | `docker-compose.yaml` | `riva` + `app` + `cloudflared` |
 | `bootstrap.sh` | One-shot host script: login, download quickstart, patch `config.sh`, patch `riva_init.sh` TTY flags, run `riva_init.sh` |
-| `.env.example` | Template for `NGC_API_KEY` |
+| `.env.example` | Template for `NGC_API_KEY`, `SOURCE_LANGUAGE`, `TARGET_LANGUAGE`, `TARGET_VOICE`, `ASR_ACOUSTIC_MODEL` |
 | `app/Dockerfile` | Python 3.11 + fastapi + nvidia-riva-client |
 | `app/entrypoint.sh` | Launches uvicorn on HTTP (TLS is done by cloudflared) |
 | `app/server.py` | FastAPI app: REST config endpoint + two WebSocket endpoints + Riva S2S relay |
