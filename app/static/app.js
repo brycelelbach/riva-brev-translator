@@ -55,6 +55,49 @@ const els = {
 })();
 
 // ---------------------------------------------------------------------------
+// Screen wake lock -- keep the device awake while a role is active.
+//
+// Mobile browsers aggressively lock the screen, which suspends the
+// AudioContext (listener) or the microphone stream (speaker) and kills the
+// WebSocket after ~30 s. Screen Wake Lock API holds the screen on while held;
+// releases automatically when the page is hidden. We re-acquire on
+// `visibilitychange` if the user tabs back.
+
+let wakeLockSentinel = null;
+let wakeLockHandlersBound = false;
+
+async function acquireWakeLock() {
+  if (!("wakeLock" in navigator)) {
+    log("Screen Wake Lock not supported on this browser; device may sleep.");
+    return;
+  }
+  try {
+    wakeLockSentinel = await navigator.wakeLock.request("screen");
+    wakeLockSentinel.addEventListener("release", () => {
+      wakeLockSentinel = null;
+    });
+    log("screen wake lock acquired");
+  } catch (err) {
+    log(`wake lock request failed: ${err.message}`);
+  }
+  if (!wakeLockHandlersBound) {
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible" && wakeLockSentinel === null) {
+        acquireWakeLock();
+      }
+    });
+    wakeLockHandlersBound = true;
+  }
+}
+
+async function releaseWakeLock() {
+  if (wakeLockSentinel) {
+    try { await wakeLockSentinel.release(); } catch {}
+    wakeLockSentinel = null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Status log
 
 function log(msg) {
@@ -95,6 +138,8 @@ async function startCapture(roomName) {
   els.partialSource.textContent = "";
   els.finalSource.innerHTML = "";
   els.translationList.innerHTML = "";
+
+  acquireWakeLock();
 
   let stream;
   try {
@@ -164,6 +209,7 @@ function stopCapture() {
   els.startCapture.disabled = false;
   els.stopCapture.disabled = true;
   els.levelBar.style.width = "0%";
+  releaseWakeLock();
   log("capture stopped");
 }
 
@@ -210,6 +256,7 @@ async function enableListenerPlayback(roomName) {
   });
   // Resume -- required after user gesture on some browsers.
   try { await audioCtx.resume(); } catch {}
+  acquireWakeLock();
 
   const state = {
     audioCtx,
@@ -234,6 +281,7 @@ async function enableListenerPlayback(roomName) {
     els.playbackStatus.textContent = "Disconnected.";
     els.startPlayback.disabled = false;
     listenerState = null;
+    releaseWakeLock();
   });
   ws.addEventListener("error", () => log("listener WS error"));
   ws.addEventListener("message", (ev) => onListenerMessage(ev, state));

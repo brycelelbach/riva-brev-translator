@@ -43,7 +43,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 # EN-US voice.
 SOURCE_LANGUAGE = "zh-CN"
 TARGET_LANGUAGE = "en-US"
-TARGET_VOICE = "Magpie-Multilingual.EN-US.Sofia"
+TARGET_VOICE = "Magpie-Multilingual.EN-US.Female.Neutral"
 ASR_SAMPLE_RATE = 16000
 TTS_SAMPLE_RATE = 44100
 
@@ -91,6 +91,8 @@ class Room:
     listener: Optional[WebSocket] = None
     pump: Optional[AudioPump] = None
     worker: Optional[threading.Thread] = None
+    asr_pump: Optional[AudioPump] = None
+    asr_worker: Optional[threading.Thread] = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def has_listener(self) -> bool:
@@ -147,34 +149,74 @@ def _build_streaming_config() -> riva_nmt_pb2.StreamingTranslateSpeechToSpeechCo
     )
 
 
-def _extract_transcripts(resp) -> Dict[str, str]:
-    """Best-effort pull of source/translated transcripts from a S2S response.
+def _run_asr_session(
+    room: Room,
+    pump: AudioPump,
+    loop: asyncio.AbstractEventLoop,
+) -> None:
+    """Parallel streaming-ASR worker for on-screen captions.
 
-    Riva has shuffled these field names across versions -- check a couple of
-    likely locations and return whatever we find. Missing fields are fine;
-    the UI degrades to audio-only playback.
+    Riva 2.19's S2S response exposes only translated audio, never the ASR
+    hypothesis or the NMT output text. To populate the UI's source/target
+    caption panes, we run a second streaming ASR on the same audio and then
+    synchronously translate each final Chinese utterance into English.
     """
-    out: Dict[str, str] = {}
-    # Speech-to-text sub-message (seen in 2.15+): `speech_to_text.results[*]`
-    stt = getattr(resp, "speech_to_text", None)
-    if stt is not None:
-        for result in getattr(stt, "results", []):
-            alts = getattr(result, "alternatives", None) or []
-            if not alts:
-                continue
-            transcript = getattr(alts[0], "transcript", "") or ""
-            if transcript:
-                key = "final" if getattr(result, "is_final", False) else "partial"
-                out[key] = transcript
-    # Some builds expose translated text on `speech.meta.processed_text`
-    speech = getattr(resp, "speech", None)
-    if speech is not None:
-        meta = getattr(speech, "meta", None)
-        if meta is not None:
-            txt = getattr(meta, "processed_text", "") or ""
-            if txt:
-                out["translated"] = txt
-    return out
+    LOG.info("[room=%s] starting parallel ASR (%s)", room.name, SOURCE_LANGUAGE)
+    try:
+        auth = riva.client.Auth(uri=RIVA_URI)
+        asr = riva.client.ASRService(auth)
+        nmt = riva.client.NeuralMachineTranslationClient(auth)
+        asr_cfg = riva_asr_pb2.RecognitionConfig(
+            encoding=riva_audio_pb2.LINEAR_PCM,
+            language_code=SOURCE_LANGUAGE,
+            max_alternatives=1,
+            enable_automatic_punctuation=True,
+            sample_rate_hertz=ASR_SAMPLE_RATE,
+            audio_channel_count=1,
+        )
+        streaming_cfg = riva_asr_pb2.StreamingRecognitionConfig(
+            config=asr_cfg,
+            interim_results=True,
+        )
+        responses = asr.streaming_response_generator(
+            audio_chunks=pump,
+            streaming_config=streaming_cfg,
+        )
+        for resp in responses:
+            for result in resp.results:
+                alts = list(getattr(result, "alternatives", []) or [])
+                if not alts:
+                    continue
+                transcript = (alts[0].transcript or "").strip()
+                if not transcript:
+                    continue
+                is_final = bool(getattr(result, "is_final", False))
+                msg: Dict[str, str] = {}
+                if is_final:
+                    msg["final"] = transcript
+                    try:
+                        tr = nmt.translate(
+                            texts=[transcript],
+                            model="megatronnmt_any_any_1b",
+                            source_language=SOURCE_LANGUAGE,
+                            target_language=TARGET_LANGUAGE.split("-")[0],
+                        )
+                        translations = list(getattr(tr, "translations", []) or [])
+                        if translations:
+                            msg["translated"] = translations[0].text
+                    except Exception:  # noqa: BLE001
+                        LOG.exception("[room=%s] translate() failed", room.name)
+                else:
+                    msg["partial"] = transcript
+                asyncio.run_coroutine_threadsafe(
+                    _broadcast_transcripts(room, msg), loop
+                )
+    except grpc.RpcError as exc:
+        LOG.warning("[room=%s] ASR gRPC error: %s", room.name, exc)
+    except Exception:  # noqa: BLE001
+        LOG.exception("[room=%s] ASR worker crashed", room.name)
+    finally:
+        LOG.info("[room=%s] ASR worker exiting", room.name)
 
 
 def _run_riva_session(
@@ -199,18 +241,11 @@ def _run_riva_session(
         )
 
         for resp in responses:
-            audio = b""
             speech = getattr(resp, "speech", None)
-            if speech is not None:
-                audio = getattr(speech, "audio", b"") or b""
+            audio = getattr(speech, "audio", b"") if speech is not None else b""
             if audio:
                 asyncio.run_coroutine_threadsafe(
                     _broadcast_audio(room, audio), loop
-                )
-            transcripts = _extract_transcripts(resp)
-            if transcripts:
-                asyncio.run_coroutine_threadsafe(
-                    _broadcast_transcripts(room, transcripts), loop
                 )
     except grpc.RpcError as exc:
         LOG.warning("[room=%s] Riva gRPC error: %s", room.name, exc)
@@ -328,14 +363,22 @@ async def ws_speaker(ws: WebSocket, room_name: str) -> None:
             return
         room.speaker = ws
         room.pump = AudioPump()
+        room.asr_pump = AudioPump()
         loop = asyncio.get_running_loop()
         room.worker = threading.Thread(
             target=_run_riva_session,
             args=(room, room.pump, loop),
-            name=f"riva-{room_name}",
+            name=f"riva-s2s-{room_name}",
+            daemon=True,
+        )
+        room.asr_worker = threading.Thread(
+            target=_run_asr_session,
+            args=(room, room.asr_pump, loop),
+            name=f"riva-asr-{room_name}",
             daemon=True,
         )
         room.worker.start()
+        room.asr_worker.start()
 
     LOG.info(
         "[room=%s] speaker connected (listener_present=%s)",
@@ -351,8 +394,11 @@ async def ws_speaker(ws: WebSocket, room_name: str) -> None:
         while True:
             msg = await ws.receive()
             if "bytes" in msg and msg["bytes"] is not None:
+                chunk = msg["bytes"]
                 if room.pump is not None:
-                    room.pump.put(msg["bytes"])
+                    room.pump.put(chunk)
+                if room.asr_pump is not None:
+                    room.asr_pump.put(chunk)
             elif msg.get("type") == "websocket.disconnect":
                 break
     except WebSocketDisconnect:
@@ -366,6 +412,9 @@ async def ws_speaker(ws: WebSocket, room_name: str) -> None:
             if room.pump is not None:
                 room.pump.close()
             room.pump = None
+            if room.asr_pump is not None:
+                room.asr_pump.close()
+            room.asr_pump = None
         await _broadcast_status(room, "speaker disconnected")
 
 
