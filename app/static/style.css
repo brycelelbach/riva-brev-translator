@@ -1,13 +1,14 @@
 :root {
-  --bg: #0b1020;
-  --panel: #151c38;
-  --panel-2: #1c2448;
+  --bg: #000000;
+  --panel: #0f0f0f;
+  --panel-2: #1a1a1a;
   --accent: #76b900;
   --accent-dark: #5a8f00;
-  --text: #e7ecff;
-  --muted: #8892b8;
+  --gold: #d4af37;
+  --text: #f2f2f2;
+  --muted: #8a8a8a;
   --danger: #ff5470;
-  --border: #2a335e;
+  --border: #262626;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
@@ -15,24 +16,28 @@
 
 body {
   margin: 0;
-  background: radial-gradient(ellipse at top, #1a2452 0%, var(--bg) 60%);
+  background: radial-gradient(ellipse at top, #0a1a04 0%, var(--bg) 55%);
   color: var(--text);
   min-height: 100vh;
 }
 
 header {
-  padding: 1.5rem 2rem 0.5rem;
+  padding: 1.5rem 2rem 0.75rem;
+  text-align: center;
+  border-bottom: 1px solid var(--border);
 }
 
 header h1 {
   margin: 0;
   font-size: 1.75rem;
   color: var(--accent);
+  letter-spacing: 0.02em;
 }
 
 .subtitle {
-  margin: 0.25rem 0 0;
-  color: var(--muted);
+  margin: 0.35rem 0 0;
+  color: var(--gold);
+  font-weight: 500;
 }
 
 main {
@@ -121,7 +126,7 @@ button.primary, button.secondary {
 
 button.primary {
   background: var(--accent);
-  color: #0b1020;
+  color: #000000;
 }
 button.primary:hover {
   background: var(--accent-dark);
@@ -157,7 +162,7 @@ button.secondary:disabled {
 }
 
 .level-bar {
-  background: linear-gradient(90deg, var(--accent), #ffb400 70%, var(--danger) 100%);
+  background: linear-gradient(90deg, var(--accent), var(--gold) 70%, var(--danger) 100%);
   width: 0%;
   height: 100%;
   transition: width 0.05s linear;
