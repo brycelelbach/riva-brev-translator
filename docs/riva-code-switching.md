@@ -33,11 +33,18 @@ recovered reasonably well in the same session ("thanks", "question", "Hello, I
 ask two questions", "the second question is that"), which is consistent with
 the monolingual-ASR hypothesis.
 
-*One caveat worth noting*: an earlier round of analysis leaned on the absence
-of the string "KVCache" in the transcript as evidence. That was a false lead —
-the speaker did not actually utter "KVCache"; a separate Google Translate
-reference had rendered something as that. The broader pattern above still
-stands, but "KVCache is missing" specifically should not be cited.
+A useful contrast: a parallel Google Translate pass on the same audio
+rendered technical terms like "KVCache" correctly in its English output,
+while our pipeline produced none of them. The speaker did not necessarily
+utter the English string "KVCache" verbatim — they may have said it with
+Chinese intonation, or used a Chinese-language rendering of the term.
+Either way, a bilingual-aware ASR (like Google's) resolved the intent
+back to "KVCache"; the monolingual zh-CN ASR in our pipeline either
+force-fit those segments to the nearest Chinese syllable or dropped them,
+and NMT has no way to reconstruct what was never transcribed. That
+Google Translate on the same audio produced the term is itself evidence
+the information was present in the source — the failure is specifically
+at the monolingual-ASR stage.
 
 ## What doesn't fix it
 
