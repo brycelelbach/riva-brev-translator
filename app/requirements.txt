@@ -2,4 +2,4 @@ fastapi==0.115.5
 uvicorn[standard]==0.32.1
 nvidia-riva-client==2.19.0
 grpcio==1.67.1
-python-multipart==0.0.17
+python-multipart==0.0.27
